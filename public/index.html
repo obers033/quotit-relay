@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Insurance + Drugs Form → Quotit Relay</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --gap: 8px; --blue:#1976d2; }
+
+    body { font-family: Arial, sans-serif; padding: 16px; background:#fafafa; }
+    form { max-width: 960px; margin:auto; background:#fff; border:1px solid #e5e5e5; border-radius:8px; padding:16px; }
+
+    h2, h3 { margin: 10px 0; }
+    h3 { border-bottom:2px solid #eee; padding-bottom:6px; }
+
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); }
+    label { display:block; margin-top: 6px; font-weight:600; font-size:13px; }
+    input, select, button {
+      width:100%; padding:6px; margin-top:2px; border:1px solid #ccc; border-radius:4px;
+      font-size:13px; box-sizing:border-box;
+    }
+    .actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+    .btn-secondary { background:#fff; border:1px solid var(--blue); color:var(--blue); padding:6px 12px; font-size:13px; }
+    .btn-primary { background:var(--blue); color:#fff; border:1px solid var(--blue); padding:6px 12px; font-size:13px; }
+    .drug-entry { border:1px solid #ddd; padding:8px; border-radius:8px; background:#f9f9f9; margin-top:10px; position:relative; }
+    .drug-entry .row { display:grid; grid-template-columns: 1.6fr 0.9fr 1.2fr 0.8fr auto; gap:8px; align-items:end; }
+    .remove-btn { background:#fff; border:1px solid #c62828; color:#c62828; padding:5px 8px; border-radius:4px; font-size:12px; margin-top:28px; cursor:pointer; }
+    .helper { font-size:11.5px; color:#666; margin-top:4px; }
+    .ac-list { position:absolute; z-index:10; background:#fff; border:1px solid #ccc; border-radius:6px;
+      box-shadow:0 6px 18px rgba(0,0,0,.08); margin-top:4px; overflow:hidden; max-height:240px; overflow-y:auto; left:0; right:0; }
+    .ac-item { padding:8px 10px; cursor:pointer; display:flex; gap:8px; align-items:baseline; }
+    .ac-item:hover, .ac-item[aria-selected="true"] { background:#eef5ff; }
+    .ac-name { font-weight:600; }
+    @media (max-width: 1000px) { .drug-entry .row { grid-template-columns: repeat(2, 1fr); } .remove-btn { margin-top:0; } }
+    @media (max-width: 600px) { .drug-entry .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<form id="leadForm" method="post" novalidate>
+  <h2>Applicant Info</h2>
+
+  <!-- Account parameters -->
+  <input type="hidden" name="license_no" value="6DYF4N"/>
+  <input type="hidden" name="brokerID" value="333853"/>
+  <input type="hidden" name="accessID" value="5f58063b-d73d-40aa-b7d0-6b2c4802ec52"/>
+
+  <div class="grid">
+    <div>
+      <label>Effective Date</label>
+      <input id="effectiveDate_display" type="date" required>
+      <input type="hidden" id="effectiveDate" name="effectiveDate">
+    </div>
+    <div>
+      <label>Insurance Type</label>
+      <select name="insuranceTypeID" required>
+        <option value="">-- Select --</option>
+        <option value="6" selected>Health Off Exchange</option>
+      </select>
+    </div>
+    <div>
+      <label>ZIP Code</label>
+      <input type="text" name="zipCode" pattern="[0-9]{5}" required>
+    </div>
+  </div>
+
+  <h3>Subscriber</h3>
+  <div class="grid">
+    <div>
+      <label>Date of Birth</label>
+      <input id="sDateOfBirth_display" type="date" required>
+      <input type="hidden" id="sDateOfBirth" name="sDateOfBirth">
+    </div>
+    <div>
+      <label>Sex</label>
+      <select name="sSex" required>
+        <option value="">-- Select --</option>
+        <option value="M">Male</option>
+        <option value="F">Female</option>
+      </select>
+    </div>
+    <div>
+      <label>Smoker?</label>
+      <select name="sIsSmoker" required>
+        <option value="0">No</option>
+        <option value="1">Yes</option>
+      </select>
+    </div>
+  </div>
+
+  <h3>Member Drug List</h3>
+  <div id="drug-container"></div>
+
+  <div class="actions">
+    <button type="button" id="add-drug" class="btn-secondary">Add Drug</button>
+    <button type="submit" class="btn-primary">Submit</button>
+  </div>
+</form>
+
+<script id="drug-json" type="application/json">
+[
+  { "NDC": "16729045317", "GenericName": "Levothyroxine Sodium", "Dosage": "125 MCG", "Route": "ORAL" }
+]
+</script>
+
+<script>
+const CONFIG = {
+  relay: true,
+  RELAY_URLS: {
+    lead: "/relay/logquote",
+    drugs: "/relay/membersdrugs"
+  }
+};
+
+const DEFAULT_DRUGS = {
+  RemoteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52",
+  WebsiteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52"
+};
+
+const drugsData = JSON.parse(document.getElementById('drug-json').textContent);
+
+function formatDateMMDDYYYY(dateStr) {
+  const [y, m, d] = dateStr.split("-");
+  return `${m}/${d}/${y}`;
+}
+
+function addDrugRow() {
+  const idx = document.querySelectorAll('.drug-entry').length;
+  const wrap = document.createElement('div');
+  wrap.className = 'drug-entry';
+  wrap.innerHTML = `
+    <div class="row">
+      <div>
+        <label>Drug Name</label>
+        <input type="text" name="drugList[${idx}][name]" class="drug-name" autocomplete="off">
+      </div>
+      <div>
+        <label>Dosage</label>
+        <select name="drugList[${idx}][dosage]" class="drug-dosage"></select>
+      </div>
+      <div>
+        <label>Frequency</label>
+        <input type="text" name="drugList[${idx}][frequency]">
+      </div>
+      <div>
+        <label>NDC</label>
+        <input type="text" name="drugList[${idx}][ndc]" readonly>
+      </div>
+      <button type="button" class="remove-btn">Remove</button>
+    </div>`;
+  document.getElementById('drug-container').appendChild(wrap);
+
+  wrap.querySelector('.remove-btn').addEventListener('click', () => wrap.remove());
+  setupDrugAutocomplete(wrap.querySelector('.drug-name'), wrap.querySelector('.drug-dosage'), wrap.querySelector('input[name*="[ndc]"]'));
+}
+
+function setupDrugAutocomplete(input, dosageSelect, ndcInput) {
+  input.addEventListener('input', () => {
+    const term = input.value.toLowerCase();
+    const matches = [...new Set(drugsData.map(d => d.GenericName))]
+      .filter(name => name.toLowerCase().includes(term));
+    dosageSelect.innerHTML = '';
+    ndcInput.value = '';
+    if (matches.length === 1 && term === matches[0].toLowerCase()) {
+      const doses = drugsData.filter(d => d.GenericName === matches[0]).map(d => d.Dosage);
+      doses.forEach(dose => {
+        const opt = document.createElement('option');
+        opt.value = dose; opt.textContent = dose;
+        dosageSelect.appendChild(opt);
+      });
+      dosageSelect.addEventListener('change', () => {
+        const drug = drugsData.find(d => d.GenericName === matches[0] && d.Dosage === dosageSelect.value);
+        ndcInput.value = drug ? drug.NDC : '';
+      });
+    }
+  });
+}
+
+document.getElementById('add-drug').addEventListener('click', addDrugRow);
+
+document.getElementById('leadForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  document.getElementById('effectiveDate').value = formatDateMMDDYYYY(document.getElementById('effectiveDate_display').value);
+  document.getElementById('sDateOfBirth').value = formatDateMMDDYYYY(document.getElementById('sDateOfBirth_display').value);
+
+  const formData = new FormData(e.target);
+  const leadPayload = new URLSearchParams(formData);
+
+  const leadRes = await fetch(CONFIG.RELAY_URLS.lead, { method: 'POST', body: leadPayload });
+  const leadText = await leadRes.text();
+  const contactIdMatch = leadText.match(/ContactId["']?\s*:\s*["']?([A-Za-z0-9\-]+)/);
+  if (!contactIdMatch) { alert("Lead submitted but ContactId not found."); return; }
+  const contactId = contactIdMatch[1];
+
+  const memberDrugs = [];
+  document.querySelectorAll('.drug-entry').forEach(entry => {
+    const name = entry.querySelector('.drug-name').value;
+    const dosage = entry.querySelector('.drug-dosage').value;
+    const ndc = entry.querySelector('input[name*="[ndc]"]').value;
+    if (name) memberDrugs.push({ NDC: ndc, DrugName: name, IsBrand: "false", Quantity: "", Frequency: entry.querySelector('input[name*="[frequency]"]').value });
+  });
+
+  const drugsPayload = {
+    RemoteAccessKey: DEFAULT_DRUGS.RemoteAccessKey,
+    WebsiteAccessKey: DEFAULT_DRUGS.WebsiteAccessKey,
+    FamilyId: "",
+    ContactId: contactId,
+    MembersDrugs: memberDrugs
+  };
+
+  await fetch(CONFIG.RELAY_URLS.drugs, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(drugsPayload) });
+  alert("Lead + Drugs submitted successfully!");
+});
+
+addDrugRow();
+</script>
+
+</body>
+</html>
