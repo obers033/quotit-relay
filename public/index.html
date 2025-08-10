@@ -173,6 +173,8 @@
     <div><label for="WebsiteAccessKey">WebsiteAccessKey</label><input id="WebsiteAccessKey" type="text" placeholder=""></div>
     <div><label for="FamilyId">FamilyId</label><input id="FamilyId" type="text" placeholder=""></div>
     <div><label for="ContactId">ContactId</label><input id="ContactId" type="text" placeholder=""></div>
+    <div><label for="MemberId">MemberId</label><input id="MemberId" type="text" placeholder="1"></div>
+<div><label for="MemberGUID">MemberGUID</label><input id="MemberGUID" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
   </div>
   <div class="actions">
     <button id="sendDrugsBtn" class="btn-secondary" type="button">Send Drugs Only</button>
@@ -46077,17 +46079,56 @@
     }).filter(d => d.DrugName || d.NDC);
   }
 
-  function buildContactDrugsPayload() {
-    const remote = (document.getElementById('RemoteAccessKey').value || DEFAULT_DRUGS.RemoteAccessKey).trim();
-    const website = (document.getElementById('WebsiteAccessKey').value || DEFAULT_DRUGS.WebsiteAccessKey).trim();
+function buildContactDrugsPayload() {
+  const remote = (document.getElementById('RemoteAccessKey')?.value || DEFAULT_DRUGS.RemoteAccessKey).trim();
+  const website = (document.getElementById('WebsiteAccessKey')?.value || DEFAULT_DRUGS.WebsiteAccessKey).trim();
+  const familyId = (document.getElementById('FamilyId')?.value || "").trim();
+  const contactId = (document.getElementById('ContactId')?.value || "").trim();
+  const memberId = (document.getElementById('MemberId')?.value || "1").trim();
+  const memberGUID = (document.getElementById('MemberGUID')?.value || "").trim();
+
+  // Collect UI rows → drug objects
+  const rows = Array.from(document.querySelectorAll('.drug-entry'));
+  const drugs = rows.map(row => {
+    const name = row.querySelector('.drug-name')?.value?.trim() || "";
+    const dose = row.querySelector('.drug-dosage')?.value?.trim() || "";
+    const ndc  = row.querySelector('.drug-ndc')?.value?.trim() || "";
+    const freq = row.querySelector('.drug-frequency')?.value?.trim() || "";
+    const qty  = row.querySelector('.drug-qty')?.value?.trim() || "";
+    const isBrand = row.querySelector('.drug-brand')?.checked || false;
+    const fromISO = row.querySelector('.drug-from')?.value || "";
+    const toISO   = row.querySelector('.drug-to')?.value || "";
+
     return {
-      RemoteAccessKey: remote,
-      WebsiteAccessKey: website,
-      FamilyId: document.getElementById('FamilyId').value.trim(),
-      ContactId: document.getElementById('ContactId').value.trim(),
-      MembersDrugs: collectDrugRows()
+      NDC: ndc,
+      DrugName: [name, dose].filter(Boolean).join(' '),
+      IsBrand: Boolean(isBrand),
+      Quantity: qty ? Number(qty) : 0,
+      Frequency: freq || "",
+      FromDate: toLocalDateTime(fromISO),
+      ToDate: toLocalDateTime(toISO),
+      Source: "Member",
+      CreatedTime: nowLocalTimestamp(),
+      ModifiedTime: nowLocalTimestamp()
     };
-  }
+  }).filter(d => d.DrugName || d.NDC);
+
+  // Wrap per-member as required
+  return {
+    RemoteAccessKey: remote,
+    WebsiteAccessKey: website,
+    FamilyId: familyId,
+    ContactId: contactId,
+    MembersDrugs: [
+      {
+        MemberId: memberId,
+        MemberGUID: memberGUID,
+        SubmissionType: "add",
+        MembersDrugs: drugs
+      }
+    ]
+  };
+}
 
   /* ====== Init drug picker ====== */
   (function initDrugPicker() {
@@ -46116,45 +46157,55 @@
     wrap.className = 'drug-entry';
     wrap.dataset.index = index;
 
-    wrap.innerHTML = `
-      <div class="row">
-        <div style="position:relative">
-          <label for="drugName_${index}">Drug ${index+1} - Generic</label>
-          <input id="drugName_${index}" type="text" name="drugList[${index}][name]" autocomplete="off" required placeholder="Start typing (e.g., Levothyroxine Sodium)">
-          <div class="ac-list" role="listbox" hidden></div>
-          <div class="helper">Type 2+ letters to search</div>
-        </div>
-        <div>
-          <label for="drugDosage_${index}">Dosage</label>
-          <select id="drugDosage_${index}" name="drugList[${index}][dosage]" required disabled>
-            <option value="">-- Select dosage --</option>
-          </select>
-          <div class="helper">Enabled after picking a generic</div>
-        </div>
-        <div>
-          <label for="drugProduct_${index}">Product / Route (NDC)</label>
-          <select id="drugProduct_${index}" data-role="prod" disabled>
-            <option value="">-- Auto --</option>
-          </select>
-          <input type="hidden" name="drugList[${index}][ndc]" data-role="ndc">
-          <div class="helper">Shown if multiple products exist</div>
-        </div>
-        <div>
-          <label for="drugFreq_${index}">Frequency</label>
-          <input id="drugFreq_${index}" type="text" name="drugList[${index}][frequency]" placeholder="e.g., Once daily">
-        </div>
-        <div>
-          <button type="button" class="remove-btn" aria-label="Remove drug">Remove</button>
-        </div>
-      </div>
-      <div class="extras">
-        <div><label><input type="checkbox" data-role="brand"> Brand?</label></div>
-        <div><label>Quantity</label><input type="number" min="0" step="1" data-role="qty" placeholder="e.g., 30"></div>
-        <div><label>From Date</label><input type="date" data-role="from"></div>
-        <div><label>To Date</label><input type="date" data-role="to"></div>
-      </div>
-      <div class="meta helper" data-role="meta-line"></div>
-    `;
+wrap.innerHTML = `
+  <div class="row">
+    <div style="position:relative">
+      <label>Drug ${idx+1} - Generic</label>
+      <input type="text" name="drugList[${idx}][name]" class="drug-name" autocomplete="off" placeholder="Start typing (e.g., Lisinopril)" required>
+      <div class="ac-list" role="listbox" hidden></div>
+      <div class="helper">Type 2+ letters to search</div>
+    </div>
+    <div>
+      <label>Dosage</label>
+      <select name="drugList[${idx}][dosage]" class="drug-dosage" required disabled>
+        <option value="">-- Select dosage --</option>
+      </select>
+      <div class="helper">Enabled after picking a generic</div>
+    </div>
+    <div>
+      <label>Product / Route (NDC)</label>
+      <select class="drug-product" disabled>
+        <option value="">-- Auto --</option>
+      </select>
+      <input type="hidden" name="drugList[${idx}][ndc]" class="drug-ndc">
+      <div class="helper">Shown if multiple products exist</div>
+    </div>
+    <div>
+      <label>Frequency</label>
+      <select name="drugList[${idx}][frequency]" class="drug-frequency">
+        <option value="">-- Select --</option>
+        <option>PerDay</option>
+        <option>PerWeek</option>
+        <option>Per30Days</option>
+        <option>Per60Days</option>
+        <option>Per90Days</option>
+      </select>
+    </div>
+    <div>
+      <button type="button" class="remove-btn">Remove</button>
+    </div>
+  </div>
+
+  <div class="extras" style="display:grid;grid-template-columns:.7fr .7fr .7fr .7fr;gap:8px;margin-top:6px;">
+    <div><label><input type="checkbox" class="drug-brand"> Brand?</label></div>
+    <div><label>Quantity</label><input type="number" min="0" step="1" class="drug-qty" placeholder="e.g., 90"></div>
+    <div><label>From Date</label><input type="date" class="drug-from"></div>
+    <div><label>To Date</label><input type="date" class="drug-to"></div>
+  </div>
+
+  <div class="meta helper" data-role="meta-line"></div>
+`;
+
 
     container.appendChild(wrap);
 
@@ -46374,10 +46425,13 @@
   /* ========================
      Contact Drugs POST (manual or chained)
      ======================== */
-  document.getElementById('previewPayloadBtn').addEventListener('click', () => {
-    const payload = buildContactDrugsPayload();
-    document.getElementById('chainStatus').textContent = JSON.stringify(payload, null, 2);
-  });
+const payload = buildContactDrugsPayload();
+await fetch(CONFIG.RELAY_URLS.drugs, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(payload)
+});
+
 
   document.getElementById('sendDrugsBtn').addEventListener('click', () => sendContactDrugs(false));
 
