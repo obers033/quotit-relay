@@ -46438,6 +46438,59 @@ const CONFIG = {
       console.error(err);
     }
   });
+  <script>
+/* --- DRUG PICKER STABILIZER --- */
+(function () {
+  const status = () => document.getElementById('chainStatus');
+  const logUi = (m) => { try { if (status()) status().textContent += (status().textContent ? "\n" : "") + m; } catch(_){} };
+
+  // 1) Show runtime errors in the UI
+  window.addEventListener('error', (e) => logUi(`❗ JS Error: ${e.message}`));
+
+  // 2) After DOM ready, (re)build catalog and ensure a row exists
+  document.addEventListener('DOMContentLoaded', () => {
+    try {
+      // Fix common cause: trailing comma in #drug-json
+      const jsonEl = document.getElementById('drug-json');
+      if (!jsonEl) { logUi('❗ Missing <script id="drug-json">'); return; }
+      let raw = [];
+      try {
+        raw = JSON.parse((jsonEl.textContent || '[]').trim());
+      } catch (e) {
+        logUi('❗ Invalid drug JSON. Remove any trailing commas.'); 
+        console.error('Drug JSON parse error:', e);
+        return;
+      }
+
+      // Build catalog if not already
+      if (!window.__catalog) {
+        if (typeof buildCatalog !== 'function') {
+          logUi('❗ buildCatalog is not defined. Make sure the main script is loaded above this block.');
+          return;
+        }
+        window.__catalog = buildCatalog(raw);
+      }
+
+      // Add a row if none
+      if (!document.querySelector('.drug-entry')) {
+        if (typeof addDrugRow !== 'function') {
+          logUi('❗ addDrugRow is not defined. Check for earlier JS errors.');
+          return;
+        }
+        addDrugRow(0, window.__catalog);
+        logUi('✓ Drug row initialized.');
+      }
+    } catch (err) {
+      logUi(`❗ Init failed: ${err.message}`);
+      console.error(err);
+    }
+  });
+
+  // 3) Little CSS guard so the dropdown doesn’t block typing
+  const style = document.createElement('style');
+  style.textContent = '.ac-list{z-index:10;pointer-events:auto}';
+  document.head.appendChild(style);
+})();
 </script>
 
 </body>
