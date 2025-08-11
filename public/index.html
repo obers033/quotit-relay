@@ -46416,22 +46416,31 @@ if (!payload.FamilyId) {
 
 
   /* ====== Boot ====== */
-  (function initDrugPicker() {
-    const raw = readRawJSON();
-    const catalog = buildCatalog(raw);
-    window.__catalog = catalog;
-
-    addDrugRow(0, catalog);
-    document.getElementById('add-drug').addEventListener('click', () => {
-      const idx = document.querySelectorAll('.drug-entry').length;
-      addDrugRow(idx, catalog);
+  document.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('error', (e) => {
+      const box = document.getElementById('chainStatus');
+      if (box) box.textContent += `\n❗ JS Error: ${e.message}`;
     });
 
-    // Prefill defaults for Contact Drugs settings
-    document.getElementById('drugsEndpoint').value = DEFAULT_DRUGS.endpoint;
-    document.getElementById('RemoteAccessKey').value = DEFAULT_DRUGS.RemoteAccessKey;
-    document.getElementById('WebsiteAccessKey').value = DEFAULT_DRUGS.WebsiteAccessKey;
-  })();
+    try {
+      const raw = readRawJSON();
+      window.__catalog = buildCatalog(raw);
+      addDrugRow(0, window.__catalog);
+      document.getElementById('add-drug')
+        .addEventListener('click', () => addDrugRow(
+          document.querySelectorAll('.drug-entry').length,
+          window.__catalog
+        ));
+
+      document.getElementById('drugsEndpoint').value = DEFAULT_DRUGS.endpoint;
+      document.getElementById('RemoteAccessKey').value = DEFAULT_DRUGS.RemoteAccessKey;
+      document.getElementById('WebsiteAccessKey').value = DEFAULT_DRUGS.WebsiteAccessKey;
+    } catch (err) {
+      const box = document.getElementById('chainStatus');
+      if (box) box.textContent += `\n❗ Init failed: ${err.message}`;
+      console.error(err);
+    }
+  });
 </script>
 
 </body>
