@@ -105,6 +105,10 @@
           <label>MemberId (optional)</label>
           <input id="memberId" placeholder="e.g. abc123 (string)" />
         </div>
+        <div>
+          <label>MemberGUID (optional)</label>
+          <input id="memberGUID" placeholder="e.g. 9c1e-...-uuid" />
+        </div>
       </div>
 
       <div class="row">
@@ -115,7 +119,7 @@
       <div id="probeOut" class="muted" style="margin-top:6px"></div>
 
       <div class="spacer"></div>
-      <div class="hint">Enter <strong>FamilyId</strong> or <strong>ContactId</strong>. Member filter is optional.</div>
+      <div class="hint">Enter <strong>FamilyId</strong> or <strong>ContactId</strong>. MemberId/MemberGUID are optional filters.</div>
     </section>
 
     <!-- RIGHT: Search/Add -->
@@ -380,7 +384,7 @@ async function loadMember(includeHistory){
     familyId: $('#familyId').value.trim() || null,
     contactId: $('#contactId').value.trim() || null,
     memberId: $('#memberId').value.trim() || null,
-    memberGUID: null,
+    memberGUID: $('#memberGUID').value.trim() || null,
     includeHistory
   };
   if(!currentMember.familyId && !currentMember.contactId){
@@ -392,8 +396,8 @@ async function loadMember(includeHistory){
       RemoteAccessKey: null, WebsiteAccessKey: null,
       FamilyId: currentMember.familyId ? currentMember.familyId.toString() : undefined,
       ContactId: currentMember.contactId ? currentMember.contactId.toString() : undefined,
-      MemberId: currentMember.memberId || undefined,          // already a string from the input
-      MemberGUID: currentMember.memberGUID || undefined,
+      MemberId: currentMember.memberId || undefined,      // string
+      MemberGUID: currentMember.memberGUID || undefined,  // string
       IncludeHistoricalData: !!includeHistory
     });
 
@@ -498,8 +502,8 @@ async function submitMemberDrugs(submissionType, drugs){
     FamilyId: currentMember.familyId ? currentMember.familyId.toString() : undefined,
     ContactId: currentMember.contactId ? currentMember.contactId.toString() : undefined,
     MembersDrugs: [{
-      MemberId: currentMember.memberId || undefined,      // already a string from the input
-      MemberGUID: currentMember.memberGUID || undefined,
+      MemberId: currentMember.memberId || undefined,          // string
+      MemberGUID: currentMember.memberGUID || undefined,      // string
       SubmissionType: submissionType, // Add | Edit | Merge | Delete
       Drugs: (drugs && drugs.length) ? drugs : undefined
     }]
@@ -526,7 +530,9 @@ $('#btnProbe').addEventListener('click', async ()=>{
     const html = members.map(m=>`
       <div style="padding:6px 8px;border:1px solid #1f2937;border-radius:8px;margin-bottom:6px">
         <div><strong>${(m.FirstName||'').trim()} ${(m.LastName||'').trim()}</strong></div>
-        <div class="muted" style="font-size:12px">MemberId: ${m.MemberId||'—'} · MemberGUID: ${m.MemberGUID||'—'}</div>
+        <div class="muted" style="font-size:12px">
+          MemberId: ${m.MemberId||'—'} · MemberGUID: ${m.MemberGUID||'—'}
+        </div>
         <div class="row" style="margin-top:6px">
           <button class="ghost" onclick="setMember('${m.MemberId||''}','${m.MemberGUID||''}')">Use this member</button>
         </div>
@@ -535,7 +541,7 @@ $('#btnProbe').addEventListener('click', async ()=>{
     $('#probeOut').innerHTML = html;
     window.setMember = (mid, mguid)=>{
       $('#memberId').value = mid || '';
-      // If you add a MemberGUID field later, set it here too.
+      $('#memberGUID').value = mguid || '';
       toast('Member selected. Now click “Load current drugs”.');
     };
   }catch(e){
