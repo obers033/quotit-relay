@@ -1,91 +1,91 @@
 // server.js
-// Minimal ActWS proxy with key injection (supports SearchRxDrugs)
-
 import express from 'express';
-import cors from 'cors';
+import fetch from 'node-fetch';
+import path from 'path';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
-// Node 18+ has global fetch; if <18, install node-fetch and import it.
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
-app.use(express.json({ limit: '1mb' }));
-app.use(cors({ origin: true })); // allow your frontend origin
+app.use(express.json());
 
+// Serve static frontend files (index.html, CSS, JS)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ===== API CONFIG =====
 const BASES = {
-  stg:  'https://wwwstg.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2',
+  stg: 'https://wwwstg.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2',
   prod: 'https://www.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2'
 };
 
-// Whitelist only the methods you actually need
-const ALLOWED = new Set([
-  'GetFamily',
-  'GetMemberDrugs',
-  'SubmitMemberDrugs',
-  'SearchRxDrugs',          // <-- important for type-ahead
-  // add others you use here...
-]);
+// Keys from Render environment variables
+const RAK = process.env.REMOTE_ACCESS_KEY;
+const WAK = process.env.WEBSITE_ACCESS_KEY;
 
-// Helper to clean undefined keys (so we don't send explicit null when not needed)
-const clean = (obj) => {
-  Object.keys(obj).forEach(k => obj[k] === undefined && delete obj[k]);
-  return obj;
-};
+if (!RAK || !WAK) {
+  console.error('❌ Missing REMOTE_ACCESS_KEY or WEBSITE_ACCESS_KEY in environment variables.');
+  process.exit(1);
+}
 
-app.post('/api/actws/:env', async (req, res) => {
+// ===== API FORWARDER =====
+async function forward(env, reqBody) {
+  const base = BASES[env];
+  if (!base) throw new Error('Invalid environment');
+
+  const { method, body } = reqBody || {};
+  if (!method || !body) throw new Error('Invalid payload');
+
+  const withKeys = {
+    ...body,
+    RemoteAccessKey: RAK,
+    WebsiteAccessKey: WAK
+  };
+
+  const url = `${base}/${method}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(withKeys)
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ActWS ${method} failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+// ===== API ROUTES =====
+app.post('/api/actws/stg', async (req, res) => {
   try {
-    const { env } = req.params;
-    const { method, body } = req.body || {};
-
-    if (!BASES[env]) {
-      return res.status(400).json({ Errors: [`Invalid env "${env}"`], IsSuccess: false });
-    }
-    if (!method || !ALLOWED.has(method)) {
-      return res.status(400).json({ Errors: [`Unsupported or missing method "${method}"`], IsSuccess: false });
-    }
-
-    const url = `${BASES[env]}/${method}`;
-
-    // Inject keys if caller left them null/undefined (recommended)
-    const payload = clean({
-      ...(body || {}),
-      RemoteAccessKey: (body?.RemoteAccessKey ?? process.env.QUOTIT_RAK),
-      WebsiteAccessKey: (body?.WebsiteAccessKey ?? process.env.QUOTIT_WAK)
-    });
-
-    // Basic sanity: SearchRxDrugs needs Inputs.Keyword for realtime
-    if (method === 'SearchRxDrugs' && !payload.Inputs?.Keyword) {
-      return res.status(400).json({ Errors: ['Inputs.Keyword is required'], IsSuccess: false });
-    }
-
-    // Forward to Quotit
-    const upstream = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify(payload),
-      // Abort after 30s
-      signal: AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined
-    });
-
-    const text = await upstream.text();
-    let json;
-    try { json = JSON.parse(text); } catch { /* leave as text */ }
-
-    // Mirror upstream status; default to JSON if parse worked
-    res.status(upstream.status);
-    if (json !== undefined) {
-      res.json(json);
-    } else {
-      res.type('text/plain').send(text);
-    }
-  } catch (err) {
-    // Network/CORS/timeout or unexpected failure
-    res.status(502).json({
-      Errors: ['Proxy error', String(err?.message || err)],
-      IsSuccess: false
-    });
+    const data = await forward('stg', req.body);
+    res.json(data);
+  } catch (e) {
+    res.status(500).send(e.message);
   }
 });
 
-// Health check
-app.get('/healthz', (_, res) => res.type('text/plain').send('ok'));
+app.post('/api/actws/prod', async (req, res) => {
+  try {
+    const data = await forward('prod', req.body);
+    res.json(data);
+  } catch (e) {
+    res.status(500).send(e.message);
+  }
+});
 
+// ===== FALLBACK TO index.html =====
+// This ensures SPA routing works even if the user refreshes on a subpath
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ===== START SERVER =====
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`ActWS proxy listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
