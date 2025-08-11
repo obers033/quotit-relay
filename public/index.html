@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Quotit Lead → SaveMemberPrescriptions (Locked)</title>
+  <title>Quotit Lead → SaveMemberPrescriptions w/ JSON Fallback</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { --gap: 8px; --blue:#1976d2; }
@@ -164,17 +164,19 @@
   <p class="helper">Type a <strong>generic name</strong> → choose allowed <strong>dosage</strong>. If multiple products exist, pick a <strong>Product / Route (NDC)</strong>.</p>
 </form>
 
-<!-- ===== Contact Drugs (Locked to SaveMemberPrescriptions form POST) ===== -->
+<!-- ===== Contact Drugs (SaveMemberPrescriptions primary, JSON fallback) ===== -->
 <div class="section-card">
   <h3>Contact Drugs Settings</h3>
   <div class="grid">
     <div>
-      <label>Endpoint (locked)</label>
+      <label>Primary endpoint (locked)</label>
       <input value="/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw" disabled>
-      <div class="helper">Relay forwards to Quotit SaveMemberPrescriptions with form data</div>
+      <div class="helper">Relay forwards with form fields: websiteId, contactID, modelStr</div>
     </div>
     <div><label for="ContactId">ContactId (numeric)</label><input id="ContactId" type="text" placeholder="Auto‑filled from lead"></div>
     <div><label for="MemberGUID">MemberGUID</label><input id="MemberGUID" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+    <div><label for="RemoteAccessKey">RemoteAccessKey (fallback)</label><input id="RemoteAccessKey" type="text" placeholder="Used only if session auth fails"></div>
+    <div><label for="WebsiteAccessKey">WebsiteAccessKey (fallback)</label><input id="WebsiteAccessKey" type="text" placeholder="Used only if session auth fails"></div>
   </div>
   <div class="actions">
     <button id="sendDrugsBtn" class="btn-secondary" type="button">Send Drugs Only</button>
@@ -45965,13 +45967,14 @@
 
 <script>
   /* ========================
-     CONFIG (relay locked)
+     CONFIG (relay + endpoints)
      ======================== */
   const CONFIG = {
     relay: true,
     RELAY_URLS: {
       lead: "/relay/logquote",
-      drugs: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw"
+      drugsForm: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw", // primary
+      drugsJSON: "/relay/membersdrugs" // fallback → JSON SubmitMemberDrugs (no query)
     }
   };
 
@@ -45989,6 +45992,12 @@
   const debounce=(fn,ms=120)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
   const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const log = (msg) => { const box = document.getElementById('chainStatus'); box.textContent += (box.textContent ? "\n" : "") + msg; };
+
+  function toLocalDateTime(dateInputValue) { return dateInputValue ? `${dateInputValue}T00:00:00` : ""; }
+  function nowLocalTimestamp() {
+    const d = new Date(), pad=n=>String(n).padStart(2,'0'), ms=String(d.getMilliseconds()).padStart(3,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
+  }
 
   /* ====== Drug data: parse & transform ====== */
   function readRawJSON() {
@@ -46163,6 +46172,48 @@
     return { websiteId, contactID, modelStr: JSON.stringify(items) };
   }
 
+  /* ====== Build JSON payload for SubmitMemberDrugs fallback ====== */
+  function buildContactDrugsPayloadJSON() {
+    const remote = (document.getElementById('RemoteAccessKey')?.value || "").trim();
+    const website = (document.getElementById('WebsiteAccessKey')?.value || "").trim();
+    const contactId = (document.getElementById('ContactId')?.value || "").trim();
+    const memberGUID = (document.getElementById('MemberGUID')?.value || "").trim();
+    const memberId = "1";
+
+    const rows = Array.from(document.querySelectorAll('.drug-entry'));
+    const drugs = rows.map(row => {
+      const name = row.querySelector('.drug-name')?.value?.trim() || "";
+      const dose = row.querySelector('.drug-dosage')?.value?.trim() || "";
+      const ndc  = row.querySelector('.drug-ndc')?.value?.trim() || "";
+      const freqTxt = row.querySelector('.drug-frequency')?.value?.trim() || "";
+      const qty  = row.querySelector('.drug-qty')?.value?.trim() || "1";
+      return {
+        NDC: ndc,
+        DrugName: [name, dose].filter(Boolean).join(' '),
+        IsBrand: Boolean(row.querySelector('.drug-brand')?.checked || false),
+        Quantity: Number(qty) || 1,
+        Frequency: freqTxt || "",
+        FromDate: "", ToDate: "",
+        Source: "Member",
+        CreatedTime: nowLocalTimestamp(),
+        ModifiedTime: nowLocalTimestamp()
+      };
+    }).filter(d => d.DrugName || d.NDC);
+
+    return {
+      RemoteAccessKey: remote,
+      WebsiteAccessKey: website,
+      FamilyId: "",
+      ContactId: contactId,
+      MembersDrugs: [{
+        MemberId: memberId,
+        MemberGUID: memberGUID,
+        SubmissionType: "add",
+        MembersDrugs: drugs
+      }]
+    };
+  }
+
   /* ====== Add drug row ====== */
   function addDrugRow(index, catalog) {
     const container = document.getElementById('drug-container');
@@ -46304,8 +46355,8 @@
     log(`✓ Extracted ContactId: ${contactId}`);
     document.getElementById('ContactId').value = contactId;
 
-    // POST drugs immediately via SaveMemberPrescriptions (form)
-    await sendDrugsForm(true);
+    // POST drugs immediately (primary form + JSON fallback)
+    await sendDrugsFormWithFallback(true);
   });
 
   // Numeric ContactId extractor
@@ -46334,24 +46385,25 @@
   }
 
   /* ========================
-     SaveMemberPrescriptions (locked form-POST)
+     SaveMemberPrescriptions (primary) + JSON fallback
      ======================== */
   document.getElementById('previewPayloadBtn').addEventListener('click', () => {
     const { modelStr, websiteId, contactID } = buildSaveMemberPrescriptionsModel();
     document.getElementById('chainStatus').textContent = `websiteId=${websiteId}\ncontactID=${contactID}\nmodelStr=${modelStr}`;
   });
 
-  document.getElementById('sendDrugsBtn').addEventListener('click', () => sendDrugsForm(false));
+  document.getElementById('sendDrugsBtn').addEventListener('click', () => sendDrugsFormWithFallback(false));
 
-  async function sendDrugsForm(fromChain) {
+  async function sendDrugsFormWithFallback(fromChain) {
+    const urlForm = CONFIG.RELAY_URLS.drugsForm;
     const { websiteId, contactID, modelStr } = buildSaveMemberPrescriptionsModel();
 
     if (!/^\d+$/.test(contactID || "")) { log("❗ ContactId must be numeric."); return; }
     if (!websiteId) { log("❗ websiteId (Broker/Website ID) is required."); return; }
     if (!modelStr || modelStr === "[]") { log("❗ No drugs to send (modelStr is empty)."); return; }
 
-    const url = CONFIG.RELAY_URLS.drugs;
-    log(`→ Posting MembersDrugs to ${url} ...`);
+    log(`→ Posting MembersDrugs (form) to ${urlForm} ...`);
+    let resText = "", resStatus = 0;
 
     try {
       const form = new URLSearchParams();
@@ -46359,26 +46411,60 @@
       form.set('contactID', contactID);
       form.set('modelStr', modelStr);
 
-      const res = await fetch(url, {
+      const res = await fetch(urlForm, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Accept":"application/json,text/plain" },
         body: form.toString()
       });
-      const text = await res.text();
-      let msg = `✓ Drugs response status: ${res.status}\n${text}`;
-      try {
-        const json = JSON.parse(text);
-        if (json && json.IsSuccess === false && Array.isArray(json.Errors) && json.Errors.length) {
-          msg = `❗ Drugs API error (${res.status}): ${json.Errors[0]}\n${text}`;
-        }
-      } catch {}
-      log(msg);
+      resStatus = res.status;
+      resText = await res.text();
     } catch (err) {
-      log(`❗ Drugs POST failed: ${err?.message || err}`);
+      log(`❗ Form POST failed: ${err?.message || err}`);
+      return;
+    }
+
+    // Log and detect auth error
+    log(`✓ Form response status: ${resStatus}\n${resText}`);
+    let failedAuth = false, isSuccessFlag = null;
+    try {
+      const json = JSON.parse(resText);
+      isSuccessFlag = json?.IsSuccess;
+      if (json && json.IsSuccess === false && Array.isArray(json.Errors)) {
+        failedAuth = json.Errors.some(e => /Authentication failed|Invalid AccessKeys/i.test(e));
+      }
+    } catch {}
+
+    if (failedAuth || isSuccessFlag === false) {
+      // Fallback to JSON SubmitMemberDrugs with Access Keys
+      const payload = buildContactDrugsPayloadJSON();
+      if (!payload.RemoteAccessKey || !payload.WebsiteAccessKey) {
+        log("❗ Auth failed; please enter RemoteAccessKey and WebsiteAccessKey (fallback).");
+        return;
+      }
+      const urlJSON = CONFIG.RELAY_URLS.drugsJSON;
+      log(`→ Falling back to JSON SubmitMemberDrugs at ${urlJSON} ...`);
+      try {
+        const res2 = await fetch(urlJSON, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json,text/plain" },
+          body: JSON.stringify(payload)
+        });
+        const text2 = await res2.text();
+        let msg = `✓ Fallback JSON response status: ${res2.status}\n${text2}`;
+        try {
+          const j2 = JSON.parse(text2);
+          if (j2 && j2.IsSuccess === false && Array.isArray(j2.Errors) && j2.Errors.length) {
+            msg = `❗ Fallback JSON API error (${res2.status}): ${j2.Errors[0]}\n${text2}`;
+          }
+        } catch {}
+        log(msg);
+      } catch (err) {
+        log(`❗ Fallback JSON POST failed: ${err?.message || err}`);
+      }
     }
   }
 
-  /* ====== Boot safely after DOM is ready ====== */
+  /* ====== Boot ====== */
   document.addEventListener('DOMContentLoaded', () => {
     // surface errors in the UI
     window.addEventListener('error', (e) => {
