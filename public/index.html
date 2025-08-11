@@ -25,9 +25,12 @@
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .row > *{flex:1}
     .search-wrap{position:relative}
-    .dropdown{position:absolute;left:0;right:0;top:100%;background:#0b1020;border:1px solid var(--border);border-radius:12px;margin-top:6px;max-height:300px;overflow:auto;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+    .dropdown{position:absolute;left:0;right:0;top:100%;background:#0b1020;border:1px solid var(--border);border-radius:12px;margin-top:6px;max-height:320px;overflow:auto;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
     .dropdown .opt{padding:10px 12px;border-bottom:1px solid #0f172a;cursor:pointer}
-    .dropdown .opt:hover{background:#0d1426}
+    .dropdown .opt:hover,.dropdown .opt.active{background:#0d1426}
+    .dropdown .hint{padding:10px 12px;color:#9ca3af;border-bottom:1px solid #0f172a}
+    .dropdown .spinner{padding:10px 12px;color:#93c5fd}
+    mark{background:transparent;color:#facc15}
     .muted{color:var(--muted)}
     table{width:100%;border-collapse:collapse}
     th,td{border-bottom:1px solid var(--border);padding:10px 8px;text-align:left;font-size:14px}
@@ -127,7 +130,7 @@
       <h2 style="margin:0 0 6px 0;font-size:16px">Find a drug</h2>
       <div class="search-wrap">
         <label>Search by name, NDC or RxCUI</label>
-        <input id="drugSearch" placeholder="e.g. Atorvastatin 10 mg" autocomplete="off" />
+        <input id="drugSearch" placeholder="Start typing e.g. ato…" autocomplete="off" />
         <div id="drugDropdown" class="dropdown" style="display:none"></div>
       </div>
       <div class="row">
@@ -342,43 +345,183 @@ async function postActWS(method, bodySansKeys){
   return data ?? text ?? null;
 }
 
-// ====== SEARCH DRUGS (SearchRxDrugs) ======
+/* ===========================
+   DRUG SEARCH (Type-ahead) — PATCHED
+   =========================== */
+const searchInput = $('#drugSearch');
+const dropdown = $('#drugDropdown');
+
 let searchTimer = null;
-$('#drugSearch').addEventListener('input', (e)=>{
-  const q = e.target.value.trim();
-  if (searchTimer) clearTimeout(searchTimer);
-  if (q.length < 3) { $('#drugDropdown').style.display='none'; return; }
-  searchTimer = setTimeout(()=> searchDrugs(q).catch(err=>toast(err.message,'error')), 250);
+let activeIndex = -1;          // for keyboard nav
+let lastList = [];             // current dropdown items
+const searchCache = new Map(); // cache by lowercased query
+
+// Close dropdown on outside click
+document.addEventListener('click', (e)=>{
+  if (!dropdown.contains(e.target) && e.target !== searchInput) {
+    hideDropdown();
+  }
 });
 
-async function searchDrugs(keyword){
-  const data = await postActWS('SearchRxDrugs', {
-    AccessKeys: {}, // proxy injects; direct requires RAK/WAK
-    Inputs: { Keyword: keyword }
+searchInput.addEventListener('input', (e)=>{
+  const q = e.target.value.trim();
+  activeIndex = -1;
+  if (searchTimer) clearTimeout(searchTimer);
+  if (q.length < 2){ hideDropdown(); return; }
+  searchTimer = setTimeout(()=> runDrugSearch(q).catch(err=>{
+    showDropdownHint('Could not search right now. You can still enter NDC and Drug Name manually.');
+    console.error(err);
+  }), 220);
+});
+
+// Keyboard nav for dropdown
+searchInput.addEventListener('keydown', (e)=>{
+  if (dropdown.style.display === 'none') return;
+
+  if (e.key === 'ArrowDown'){
+    e.preventDefault();
+    if (lastList.length === 0) return;
+    activeIndex = (activeIndex + 1) % lastList.length;
+    updateActive();
+  } else if (e.key === 'ArrowUp'){
+    e.preventDefault();
+    if (lastList.length === 0) return;
+    activeIndex = (activeIndex - 1 + lastList.length) % lastList.length;
+    updateActive();
+  } else if (e.key === 'Enter'){
+    if (activeIndex >= 0 && activeIndex < lastList.length){
+      e.preventDefault();
+      chooseOption(lastList[activeIndex]);
+    }
+  } else if (e.key === 'Escape'){
+    hideDropdown();
+  }
+});
+
+function updateActive(){
+  Array.from(dropdown.children).forEach((el,i)=>{
+    el.classList.toggle('active', i===activeIndex);
   });
-  const list = (data?.Drugs || []).slice(0, 30);
-  const dd = $('#drugDropdown'); dd.innerHTML='';
-  list.forEach(drug=>{
-    (drug.DrugPackages||[]).forEach(pkg=>{
-      const div = document.createElement('div');
-      div.className='opt';
-      div.innerHTML = `
-        <div><strong>${drug.BrandName || drug.GenericName || 'Unknown'}</strong> <span class="pill">${pkg.NDC}</span></div>
-        <div class="muted" style="font-size:12px">${pkg.FDAProductName||''} · ${pkg.PackageDescription||''}</div>`;
-      div.onclick = ()=>{
-        selectedDrug = { ndc: pkg.NDC, name: (drug.GenericName || drug.BrandName || '').trim() || (pkg.FDAProductName||'').trim(), isBrand: !!pkg.IsBrand };
-        $('#ndc').value = selectedDrug.ndc;
-        $('#drugName').value = selectedDrug.name;
-        $('#isBrand').value = selectedDrug.isBrand ? 'true' : 'false';
-        dd.style.display='none';
-      };
-      dd.appendChild(div);
-    });
-  });
-  dd.style.display = dd.childElementCount ? 'block' : 'none';
 }
 
-// ====== LOAD MEMBER DRUGS ======
+// Launch the search with caching + spinner (patched to allow proxy key injection)
+async function runDrugSearch(keyword){
+  const q = keyword.toLowerCase();
+
+  // Cached?
+  if (searchCache.has(q)){
+    renderDrugOptions(keyword, searchCache.get(q));
+    return;
+  }
+
+  // Spinner
+  dropdown.innerHTML = `<div class="spinner">Searching “${escapeHtml(keyword)}” …</div>`;
+  dropdown.style.display = 'block';
+
+  // ⬇️ IMPORTANT: use top-level keys so proxy injects credentials
+  const data = await postActWS('SearchRxDrugs', {
+    RemoteAccessKey: null,
+    WebsiteAccessKey: null,
+    Inputs: { Keyword: keyword }
+  });
+
+  // Friendly hint if authentication still fails
+  if (data?.IsSuccess === false && Array.isArray(data.Errors)) {
+    const authErr = data.Errors.find(e => /auth/i.test(e));
+    if (authErr) {
+      showDropdownHint('Authentication failed (SearchRxDrugs). Try Direct mode with your keys, or update the proxy to inject keys for this method.');
+      return;
+    }
+  }
+
+  // Some accounts may not have realtime search; handle gracefully
+  const list = (data?.Drugs || []).slice(0, 50); // cap for UX
+  searchCache.set(q, list);
+  renderDrugOptions(keyword, list);
+
+  if (!list.length){
+    showDropdownHint(
+      'No matches. If search stays empty, ask Quotit to enable real‑time keyword for SearchRxDrugs, or enter NDC manually.'
+    );
+  }
+}
+
+function renderDrugOptions(keyword, drugs){
+  dropdown.innerHTML = '';
+  const qlc = keyword.toLowerCase();
+  lastList = [];
+
+  drugs.forEach(drug=>{
+    const brand = drug.BrandName || '';
+    const generic = drug.GenericName || '';
+    const title = (brand || generic || 'Unnamed').trim();
+
+    (drug.DrugPackages || []).slice(0, 2).forEach(pkg=>{
+      // Build display lines
+      const ndc = String(pkg.NDC || '').trim();
+      const isBrand = !!pkg.IsBrand;
+      const nameToShow = title || (pkg.FDAProductName || '');
+      const hi = highlight(nameToShow, qlc);
+
+      const div = document.createElement('div');
+      div.className = 'opt';
+      div.innerHTML = `
+        <div><strong>${hi}</strong> ${ndc ? `<span class="pill">${ndc}</span>`:''}</div>
+        <div class="muted" style="font-size:12px">${escapeHtml(pkg.FDAProductName||'')}${pkg.PackageDescription ? ' · ' + escapeHtml(pkg.PackageDescription) : ''}</div>
+      `;
+      const option = {
+        ndc,
+        name: (generic || brand || pkg.FDAProductName || '').trim(),
+        isBrand
+      };
+      div.onclick = ()=> chooseOption(option);
+      dropdown.appendChild(div);
+      lastList.push(option);
+    });
+  });
+
+  if (!dropdown.childElementCount){
+    dropdown.innerHTML = `<div class="hint">No results for “${escapeHtml(keyword)}”.</div>`;
+  }
+  dropdown.style.display = 'block';
+  activeIndex = -1;
+}
+
+function chooseOption(option){
+  selectedDrug = { ndc: option.ndc, name: option.name, isBrand: !!option.isBrand };
+  $('#ndc').value = selectedDrug.ndc || '';
+  $('#drugName').value = selectedDrug.name || '';
+  $('#isBrand').value = selectedDrug.isBrand ? 'true' : 'false';
+  hideDropdown();
+}
+
+function hideDropdown(){
+  dropdown.style.display = 'none';
+  dropdown.innerHTML = '';
+  lastList = [];
+  activeIndex = -1;
+}
+
+function showDropdownHint(text){
+  dropdown.innerHTML = `<div class="hint">${escapeHtml(text)}</div>`;
+  dropdown.style.display = 'block';
+}
+
+// utils for highlighting & escaping
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function highlight(text, qlc){
+  const t = text || '';
+  const i = t.toLowerCase().indexOf(qlc);
+  if (i === -1) return escapeHtml(t);
+  const a = escapeHtml(t.slice(0,i));
+  const b = escapeHtml(t.slice(i, i+qlc.length));
+  const c = escapeHtml(t.slice(i+qlc.length));
+  return `${a}<mark>${b}</mark>${c}`;
+}
+
+/* ===========================
+   LOAD / TABLE / SUBMIT
+   =========================== */
 $('#btnLoad').addEventListener('click', ()=> loadMember(false));
 $('#btnLoadHistory').addEventListener('click', ()=> loadMember(true));
 
@@ -433,7 +576,7 @@ function renderTable(){
       <td>${r.NDC}</td>
       <td>${r.DrugName}</td>
       <td>${r.IsBrand ? 'Brand' : 'Generic'}</td>
-      <td>${(r.Quantity??'–')}/${freqLabel(r.Frequency)}</td>
+      <td>${(r.Quantity??'–')}/${(r.Frequency || '–')}</td>
       <td>${range}</td>
       <td><span class="muted" title="CreatedTime">${r.CreatedTime || '—'}</span></td>
       <td class="row" style="gap:6px">
@@ -462,8 +605,6 @@ window.deleteDrug = async (i)=>{
     await loadMember(currentMember.includeHistory);
   }catch(e){ toast(e.message,'error');}
 };
-
-function freqLabel(v){ return v || '–'; }
 
 // ====== ADD / EDIT ======
 $('#btnAdd').addEventListener('click', async ()=>{
@@ -497,7 +638,7 @@ $('#btnClear').addEventListener('click', ()=>{
   $('#isBrand').value='false'; $('#freq').value='';
 });
 
-// ====== SubmitMemberDrugs (member targeting, validations, diag echo) ======
+/* ====== SubmitMemberDrugs (member targeting, validations, diag echo) ====== */
 async function submitMemberDrugs(submissionType, drugs){
   const fam = ($('#familyId').value.trim() || null);
   const con = ($('#contactId').value.trim() || null);
@@ -564,7 +705,7 @@ async function submitMemberDrugs(submissionType, drugs){
   return resp;
 }
 
-// ====== GetFamily (Probe) ======
+/* ====== GetFamily (Probe) ====== */
 $('#btnProbe').addEventListener('click', async ()=>{
   const familyId  = $('#familyId').value.trim() || null;
   const contactId = $('#contactId').value.trim() || null;
@@ -607,7 +748,7 @@ $('#btnProbe').addEventListener('click', async ()=>{
   }
 });
 
-// ====== Diagnostics ======
+/* ====== Diagnostics quick actions ====== */
 $('#btnLast').addEventListener('click', ()=>{
   $('#diagOut').textContent =
     `Last URL:\n${__last.url}\n\n` +
@@ -627,7 +768,7 @@ $('#btnDiag').addEventListener('click', async ()=>{
 
   try{
     // 1) Sanity: verifies keys/env via drug search
-    const rx = await postActWS('SearchRxDrugs', { AccessKeys:{}, Inputs:{ Keyword:'atorvastatin' }});
+    const rx = await postActWS('SearchRxDrugs', { RemoteAccessKey:null, WebsiteAccessKey:null, Inputs:{ Keyword:'atorvastatin' }});
     log('SearchRxDrugs atorvastatin (count)', { count: (rx?.Drugs ? rx.Drugs.length : 0) });
 
     // 2) If family/contact provided, probe members
@@ -663,7 +804,7 @@ $('#btnDiag').addEventListener('click', async ()=>{
 
   }catch(e){
     out.push('❌ Diagnostics error:\n' + e.message + '\n');
-    out.push('Tip: click "Show last request/response" for the full payload and response body.\n');
+    out.push('Tip: if SearchRxDrugs returns empty due to permissions, you can still enter NDC + Drug Name manually.\n');
   }
 
   $('#diagOut').textContent = out.join('\n');
