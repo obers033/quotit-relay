@@ -168,7 +168,7 @@
 <div class="section-card">
   <h3>Contact Drugs API Settings</h3>
   <div class="grid">
-    <div><label for="drugsEndpoint">Contact Drugs Endpoint URL</label><input id="drugsEndpoint" type="url" placeholder="https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs"></div>
+    <div><label for="drugsEndpoint">Contact Drugs Endpoint URL</label><input id="drugsEndpoint" type="url" placeholder="https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs?_method=SaveMemberPrescriptions&_session=rw"></div>
     <div><label for="RemoteAccessKey">RemoteAccessKey</label><input id="RemoteAccessKey" type="text" placeholder=""></div>
     <div><label for="WebsiteAccessKey">WebsiteAccessKey</label><input id="WebsiteAccessKey" type="text" placeholder=""></div>
     <div><label for="FamilyId">FamilyId</label><input id="FamilyId" type="text" placeholder=""></div>
@@ -45967,16 +45967,17 @@
   /* ========================
      CONFIG + DEFAULTS
      ======================== */
-const CONFIG = {
-  leadEndpoint: "https://www.quotit.net/quotit/apps/epro/logquote/logquote?",
-  relay: true,
-  RELAY_URLS: {
-    lead: "/relay/logquote",
-    drugs: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw"
+  const CONFIG = {
+    leadEndpoint: "https://www.quotit.net/quotit/apps/epro/logquote/logquote?",
+    relay: true, // using your Render relay
+    RELAY_URLS: {
+      lead: "/relay/logquote",
+      drugs: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw"  // ← query flags required by Quotit
+    }
   };
 
   const DEFAULT_DRUGS = {
-  endpoint: "https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs?_method=SaveMemberPrescriptions&_session=rw",
+    endpoint: "https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs?_method=SaveMemberPrescriptions&_session=rw",
     RemoteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52",
     WebsiteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52"
   };
@@ -46409,7 +46410,7 @@ const CONFIG = {
     }
   }
 
-  /* ====== Boot safely after DOM is ready (#3) ====== */
+  /* ====== Boot safely after DOM is ready ====== */
   document.addEventListener('DOMContentLoaded', () => {
     // surface errors in the UI
     window.addEventListener('error', (e) => {
@@ -46438,45 +46439,30 @@ const CONFIG = {
       console.error(err);
     }
   });
-  <script>
-/* --- DRUG PICKER STABILIZER --- */
+</script>
+
+<!-- ===== Stabilizer: guarantees a row + exposes errors ===== -->
+<script>
 (function () {
   const status = () => document.getElementById('chainStatus');
   const logUi = (m) => { try { if (status()) status().textContent += (status().textContent ? "\n" : "") + m; } catch(_){} };
 
-  // 1) Show runtime errors in the UI
   window.addEventListener('error', (e) => logUi(`❗ JS Error: ${e.message}`));
 
-  // 2) After DOM ready, (re)build catalog and ensure a row exists
   document.addEventListener('DOMContentLoaded', () => {
     try {
-      // Fix common cause: trailing comma in #drug-json
       const jsonEl = document.getElementById('drug-json');
       if (!jsonEl) { logUi('❗ Missing <script id="drug-json">'); return; }
       let raw = [];
-      try {
-        raw = JSON.parse((jsonEl.textContent || '[]').trim());
-      } catch (e) {
-        logUi('❗ Invalid drug JSON. Remove any trailing commas.'); 
-        console.error('Drug JSON parse error:', e);
-        return;
-      }
+      try { raw = JSON.parse((jsonEl.textContent || '[]').trim()); }
+      catch (e) { logUi('❗ Invalid drug JSON. Remove any trailing commas.'); console.error('Drug JSON parse error:', e); return; }
 
-      // Build catalog if not already
       if (!window.__catalog) {
-        if (typeof buildCatalog !== 'function') {
-          logUi('❗ buildCatalog is not defined. Make sure the main script is loaded above this block.');
-          return;
-        }
+        if (typeof buildCatalog !== 'function') { logUi('❗ buildCatalog is not defined.'); return; }
         window.__catalog = buildCatalog(raw);
       }
-
-      // Add a row if none
       if (!document.querySelector('.drug-entry')) {
-        if (typeof addDrugRow !== 'function') {
-          logUi('❗ addDrugRow is not defined. Check for earlier JS errors.');
-          return;
-        }
+        if (typeof addDrugRow !== 'function') { logUi('❗ addDrugRow is not defined.'); return; }
         addDrugRow(0, window.__catalog);
         logUi('✓ Drug row initialized.');
       }
@@ -46486,7 +46472,6 @@ const CONFIG = {
     }
   });
 
-  // 3) Little CSS guard so the dropdown doesn’t block typing
   const style = document.createElement('style');
   style.textContent = '.ac-list{z-index:10;pointer-events:auto}';
   document.head.appendChild(style);
