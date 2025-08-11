@@ -103,7 +103,7 @@
         </div>
         <div>
           <label>MemberId (optional)</label>
-          <input id="memberId" placeholder="e.g. 9c1e... (string)" />
+          <input id="memberId" placeholder="e.g. abc123 (string)" />
         </div>
       </div>
 
@@ -195,6 +195,16 @@
       <tbody id="tbody"></tbody>
     </table>
   </section>
+
+  <!-- Diagnostics panel -->
+  <section class="card" style="margin-top:16px">
+    <h2 style="margin:0 0 10px 0;font-size:16px">Diagnostics</h2>
+    <div class="row">
+      <button id="btnDiag" class="secondary">Run diagnostics</button>
+      <button id="btnLast" class="ghost">Show last request/response</button>
+    </div>
+    <div id="diagOut" class="muted" style="margin-top:10px; white-space:pre-wrap; word-break:break-word;"></div>
+  </section>
 </main>
 
 <div id="toast" class="toast"></div>
@@ -224,9 +234,13 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const toast = (msg, type='info') => {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  t.style.borderColor = type==='error' ? '#7f1d1d' : '#1f2a44';
+  t.style.borderColor = type==='error' ? '#7f1d1d' : '#1f2a4';
   setTimeout(()=>t.classList.remove('show'), 3400);
 };
+
+// --- debug capture ---
+let __last = { url:'', payload:null, response:null, error:null };
+function show(obj){ try{ return JSON.stringify(obj, null, 2);}catch{ return String(obj);} }
 
 // State
 let currentMember = { familyId:null, contactId:null, memberId:null, memberGUID:null, includeHistory:false };
@@ -286,27 +300,37 @@ function apiTarget(method){
   }
 }
 
-// ====== POST ======
+// ====== POST (instrumented) ======
 async function postActWS(method, bodySansKeys){
   const { url, direct } = apiTarget(method);
   let body = bodySansKeys;
 
   if (direct){
-    // inject keys from inputs
     const rak = $('#rak').value.trim();
     const wak = $('#wak').value.trim();
     if(!rak || !wak) throw new Error('RemoteAccessKey and WebsiteAccessKey are required in Direct mode');
     body = { ...bodySansKeys, RemoteAccessKey: rak, WebsiteAccessKey: wak };
   }
 
+  const payload = direct ? body : { method, body };
+  __last = { url, payload, response:null, error:null };
+
   const res = await fetch(url, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(direct ? body : { method, body })
+    body: JSON.stringify(payload)
   });
 
-  if(!res.ok) throw new Error('HTTP '+res.status+' '+await res.text());
-  return res.json();
+  let data, text;
+  try { data = await res.clone().json(); } catch { text = await res.text(); }
+
+  if(!res.ok){
+    __last.error = { status: res.status, body: text || data };
+    throw new Error(`HTTP ${res.status}: ${text || show(data) || '(no body)'}`);
+  }
+
+  __last.response = data ?? text;
+  return data ?? text;
 }
 
 // ====== SEARCH DRUGS (SearchRxDrugs) ======
@@ -323,7 +347,7 @@ async function searchDrugs(keyword){
     AccessKeys: {}, // proxy injects; direct requires RAK/WAK (added above)
     Inputs: { Keyword: keyword }
   });
-  const list = (data.Drugs || []).slice(0, 30);
+  const list = (data?.Drugs || []).slice(0, 30);
   const dd = $('#drugDropdown'); dd.innerHTML='';
   list.forEach(drug=>{
     (drug.DrugPackages||[]).forEach(pkg=>{
@@ -361,22 +385,26 @@ async function loadMember(includeHistory){
     toast('Provide FamilyId or ContactId', 'error'); return;
   }
 
-  const resp = await postActWS('GetMemberDrugs', {
-    RemoteAccessKey: null, WebsiteAccessKey: null,
-    FamilyId: currentMember.familyId ? Number(currentMember.familyId) : undefined,
-    ContactId: currentMember.contactId ? Number(currentMember.contactId) : undefined,
-    MemberId: currentMember.memberId || undefined,
-    MemberGUID: currentMember.memberGUID || undefined,
-    IncludeHistoricalData: !!includeHistory
-  });
+  try{
+    const resp = await postActWS('GetMemberDrugs', {
+      RemoteAccessKey: null, WebsiteAccessKey: null,
+      FamilyId: currentMember.familyId ? Number(currentMember.familyId) : undefined,
+      ContactId: currentMember.contactId ? Number(currentMember.contactId) : undefined,
+      MemberId: currentMember.memberId || undefined,
+      MemberGUID: currentMember.memberGUID || undefined,
+      IncludeHistoricalData: !!includeHistory
+    });
 
-  const rows = (resp.MembersDrugs||[]).flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
-  cachedRows = rows;
-  const msg = rows.length
-    ? `${rows.length} drug(s) found` + (currentMember.memberId||currentMember.memberGUID ? ` for member ${currentMember.memberId||currentMember.memberGUID}` : ' (all members)') + (includeHistory?' · incl. history':'')
-    : 'No drugs found for the supplied IDs.';
-  $('#memberLabel').textContent = msg;
-  renderTable();
+    const rows = (resp?.MembersDrugs||[]).flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
+    cachedRows = rows;
+    const msg = rows.length
+      ? `${rows.length} drug(s) found` + (currentMember.memberId||currentMember.memberGUID ? ` for member ${currentMember.memberId||currentMember.memberGUID}` : ' (all members)') + (includeHistory?' · incl. history':'')
+      : 'No drugs found for the supplied IDs.';
+    $('#memberLabel').textContent = msg;
+    renderTable();
+  }catch(e){
+    toast(`Error: ${e.message}`, 'error');
+  }
 }
 
 function renderTable(){
@@ -490,7 +518,7 @@ $('#btnProbe').addEventListener('click', async ()=>{
       ContactId: contactId ? Number(contactId) : undefined
     };
     const resp = await postActWS('GetFamily', body);
-    const members = (resp.Family && resp.Family.Members) || [];
+    const members = (resp?.Family?.Members) || [];
     if(!members.length){ $('#probeOut').textContent = 'No members found under this ID.'; return; }
 
     const html = members.map(m=>`
@@ -511,6 +539,58 @@ $('#btnProbe').addEventListener('click', async ()=>{
   }catch(e){
     $('#probeOut').textContent = 'Probe error: ' + e.message;
   }
+});
+
+// ====== Diagnostics ======
+$('#btnLast').addEventListener('click', ()=>{
+  $('#diagOut').textContent = `Last URL:\n${__last.url}\n\nPayload:\n${show(__last.payload)}\n\nResponse:\n${show(__last.response)}\n\nError:\n${show(__last.error)}`;
+});
+
+$('#btnDiag').addEventListener('click', async ()=>{
+  const familyId  = $('#familyId').value.trim() || null;
+  const contactId = $('#contactId').value.trim() || null;
+
+  const out = [];
+  const log = (label, obj)=> out.push(`▶ ${label}:\n${show(obj)}\n`);
+
+  try{
+    // 1) Sanity: public-ish data path (verifies keys/env)
+    const rx = await postActWS('SearchRxDrugs', { AccessKeys:{}, Inputs:{ Keyword:'atorvastatin' }});
+    log('SearchRxDrugs atorvastatin (count)', { count: (rx?.Drugs ? rx.Drugs.length : 0) });
+
+    // 2) If family/contact provided, probe members
+    if (familyId || contactId){
+      const gf = await postActWS('GetFamily', {
+        RemoteAccessKey:null, WebsiteAccessKey:null,
+        FamilyId: familyId ? Number(familyId) : undefined,
+        ContactId: contactId ? Number(contactId) : undefined
+      });
+      log('GetFamily.Members (first 3)', Array.isArray(gf?.Family?.Members) ? gf.Family.Members.slice(0,3) : gf);
+
+      // 3) GetMemberDrugs WITHOUT member filter
+      const gmd = await postActWS('GetMemberDrugs', {
+        RemoteAccessKey:null, WebsiteAccessKey:null,
+        FamilyId: familyId ? Number(familyId) : undefined,
+        ContactId: contactId ? Number(contactId) : undefined,
+        IncludeHistoricalData: false
+      });
+      log('GetMemberDrugs summary', {
+        members: (gmd?.MembersDrugs ? gmd.MembersDrugs.length : 0),
+        first: (gmd?.MembersDrugs?.[0]) ? {
+          MemberId: gmd.MembersDrugs[0].MemberId || gmd.MembersDrugs[0].MemberGUID,
+          drugs: (gmd.MembersDrugs[0].Drugs||[]).length
+        } : null
+      });
+    } else {
+      out.push('ℹ️ Provide FamilyId or ContactId for GetFamily/GetMemberDrugs probes.\n');
+    }
+
+  }catch(e){
+    out.push('❌ Diagnostics error:\n' + e.message + '\n');
+    out.push('Tip: click "Show last request/response" for the full payload and response body.\n');
+  }
+
+  $('#diagOut').textContent = out.join('\n');
 });
 </script>
 </body>
