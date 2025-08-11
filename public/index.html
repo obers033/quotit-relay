@@ -380,31 +380,30 @@ $('#btnLoad').addEventListener('click', ()=> loadMember(false));
 $('#btnLoadHistory').addEventListener('click', ()=> loadMember(true));
 
 async function loadMember(includeHistory){
-  currentMember = {
-    familyId: $('#familyId').value.trim() || null,
-    contactId: $('#contactId').value.trim() || null,
-    memberId: $('#memberId').value.trim() || null,
-    memberGUID: $('#memberGUID').value.trim() || null,
-    includeHistory
-  };
-  if(!currentMember.familyId && !currentMember.contactId){
-    toast('Provide FamilyId or ContactId', 'error'); return;
-  }
+  const fam = $('#familyId').value.trim() || null;
+  const con = $('#contactId').value.trim() || null;
+  const mid = $('#memberId').value.trim() || null;
+  const mg  = $('#memberGUID').value.trim() || null;
+
+  if(!fam && !con){ toast('Provide FamilyId or ContactId', 'error'); return; }
+  if(mid && !fam){ toast('MemberId requires FamilyId. Or use MemberGUID instead.', 'error'); return; }
+
+  currentMember = { familyId:fam, contactId:con, memberId:mid, memberGUID:mg, includeHistory };
 
   try{
     const resp = await postActWS('GetMemberDrugs', {
       RemoteAccessKey: null, WebsiteAccessKey: null,
-      FamilyId: currentMember.familyId ? currentMember.familyId.toString() : undefined,
-      ContactId: currentMember.contactId ? currentMember.contactId.toString() : undefined,
-      MemberId: currentMember.memberId || undefined,      // string
-      MemberGUID: currentMember.memberGUID || undefined,  // string
+      FamilyId: fam ? fam.toString() : undefined,
+      ContactId: con ? con.toString() : undefined,
+      MemberId: mid || undefined,      // string
+      MemberGUID: mg || undefined,     // string
       IncludeHistoricalData: !!includeHistory
     });
 
     const rows = (resp?.MembersDrugs||[]).flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
     cachedRows = rows;
     const msg = rows.length
-      ? `${rows.length} drug(s) found` + (currentMember.memberId||currentMember.memberGUID ? ` for member ${currentMember.memberId||currentMember.memberGUID}` : ' (all members)') + (includeHistory?' · incl. history':'')
+      ? `${rows.length} drug(s) found` + (mid||mg ? ` for member ${mid||mg}` : ' (all members)') + (includeHistory?' · incl. history':'')
       : 'No drugs found for the supplied IDs.';
     $('#memberLabel').textContent = msg;
     renderTable();
@@ -477,9 +476,11 @@ $('#btnAdd').addEventListener('click', async ()=>{
     };
     if(!drug.NDC || !drug.DrugName || !drug.FromDate) { toast('NDC, Drug Name, From Date are required', 'error'); return; }
     if(drug.Quantity && !drug.Frequency){ toast('Frequency is required when Quantity is provided', 'error'); return; }
+    if(!/^\d{11}$/.test(String(drug.NDC))) { toast('NDC must be exactly 11 digits (leading zeros matter).', 'error'); return; }
 
     let submissionType = (selectedDrug && selectedDrug.createdTime) ? 'Edit' : 'Add';
-    if(submissionType==='Edit'){ drug.CreatedTime = selectedDrug.createdTime; }
+    if(submissionType==='Edit'){ drug.CreatedTime = selectedDrug.createdTime; } // required for Edit
+
     await submitMemberDrugs(submissionType, [drug]);
     toast(submissionType==='Add'?'Added ✅':'Updated ✅');
     $('#btnClear').click();
@@ -493,22 +494,61 @@ $('#btnClear').addEventListener('click', ()=>{
   $('#isBrand').value='false'; $('#freq').value='';
 });
 
-// ====== SubmitMemberDrugs ======
+// ====== SubmitMemberDrugs (with validations & diag echo) ======
 async function submitMemberDrugs(submissionType, drugs){
-  if(!currentMember.familyId && !currentMember.contactId) throw new Error('Provide FamilyId/ContactId first');
+  const fam = ($('#familyId').value.trim() || null);
+  const con = ($('#contactId').value.trim() || null);
+  const mid = ($('#memberId').value.trim() || null);
+  const mg  = ($('#memberGUID').value.trim() || null);
+
+  if(!fam && !con) throw new Error('Provide FamilyId or ContactId first');
+
+  // Rule: MemberId requires FamilyId; otherwise use MemberGUID
+  if(mid && !fam){
+    throw new Error('MemberId requires FamilyId. Either enter FamilyId + MemberId, or leave MemberId blank and use MemberGUID.');
+  }
+
+  // Validate each drug
+  if (Array.isArray(drugs)) {
+    for (const d of drugs) {
+      if (!/^\d{11}$/.test(String(d.NDC||''))) {
+        throw new Error(`NDC must be exactly 11 digits (got "${d.NDC || ''}")`);
+      }
+      if (d.Quantity != null && d.Frequency == null) {
+        throw new Error('Frequency is required when Quantity is provided');
+      }
+      // For Edit/Delete, API requires CreatedTime to match the record's CreatedTime.
+      if ((submissionType === 'Edit' || submissionType === 'Delete' || submissionType === 'Merge') && !d.CreatedTime) {
+        throw new Error(`${submissionType} requires CreatedTime on the drug record (prefill first, then submit).`);
+      }
+    }
+  }
 
   const body = {
     RemoteAccessKey:null, WebsiteAccessKey:null,
-    FamilyId: currentMember.familyId ? currentMember.familyId.toString() : undefined,
-    ContactId: currentMember.contactId ? currentMember.contactId.toString() : undefined,
+    FamilyId: fam ? fam.toString() : undefined,
+    ContactId: con ? con.toString() : undefined,
     MembersDrugs: [{
-      MemberId: currentMember.memberId || undefined,          // string
-      MemberGUID: currentMember.memberGUID || undefined,      // string
-      SubmissionType: submissionType, // Add | Edit | Merge | Delete
+      MemberId: mid || undefined,             // string (requires FamilyId)
+      MemberGUID: mg || undefined,            // string
+      SubmissionType: submissionType,         // Add | Edit | Merge | Delete
       Drugs: (drugs && drugs.length) ? drugs : undefined
     }]
   };
-  return postActWS('SubmitMemberDrugs', body);
+
+  const resp = await postActWS('SubmitMemberDrugs', body);
+
+  // Echo last request/response to Diagnostics for transparency
+  $('#diagOut').textContent =
+    `Last URL:\n${__last.url}\n\n` +
+    `Status:\n${__last.status}\n\n` +
+    `Payload:\n${show(__last.payload)}\n\n` +
+    `Response (parsed):\n${show(__last.response)}\n\n` +
+    `Response (raw text):\n${__last.bodyText || '(none)'}\n\n` +
+    `Error:\n${show(__last.error)}`;
+
+  toast(`SubmitMemberDrugs OK • RequestId=${resp?.RequestId ?? '—'}`);
+  return resp;
 }
 
 // ====== GetFamily (Probe) ======
