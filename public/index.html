@@ -46115,99 +46115,94 @@
   }
 
   /* ====== Add drug row UI (FIXED) ====== */
-  function addDrugRow(index, catalog) {
-    const container = document.getElementById('drug-container');
-    const wrap = document.createElement('div');
-    wrap.className = 'drug-entry';
-    wrap.dataset.index = index;
+<script>
+function addDrugRow(index, catalog) {
+  const container = document.getElementById('drug-container');
+  const wrap = document.createElement('div');
+  wrap.className = 'drug-entry';
+  wrap.dataset.index = index;
 
-    wrap.innerHTML = `
-      <div class="row">
-        <div style="position:relative">
-          <label>Drug ${index+1} - Generic</label>
-          <input type="text" class="drug-name" autocomplete="off" placeholder="Start typing (e.g., Lisinopril)" required>
-          <div class="ac-list" role="listbox" hidden></div>
-          <div class="helper">Type 2+ letters to search</div>
-        </div>
-        <div>
-          <label>Dosage</label>
-          <select class="drug-dosage" required disabled>
-            <option value="">-- Select dosage --</option>
-          </select>
-          <div class="helper">Enabled after picking a generic</div>
-        </div>
-        <div>
-          <label>Product / Route (NDC)</label>
-          <select class="drug-product" disabled>
-            <option value="">-- Auto --</option>
-          </select>
-          <input type="hidden" class="drug-ndc">
-          <div class="helper">Shown if multiple products exist</div>
-        </div>
-        <div>
-          <label>Frequency</label>
-          <select class="drug-frequency">
-            <option value="">-- Select --</option>
-            <option>PerDay</option>
-            <option>PerWeek</option>
-            <option>Per30Days</option>
-            <option>Per60Days</option>
-            <option>Per90Days</option>
-          </select>
-        </div>
-        <div>
-          <button type="button" class="remove-btn">Remove</button>
-        </div>
+  wrap.innerHTML = `
+    <div class="row">
+      <div style="position:relative">
+        <label>Drug ${index+1} - Generic</label>
+        <input type="text" class="drug-name" autocomplete="off" placeholder="Start typing (e.g., Lisinopril)" required>
+        <div class="ac-list" role="listbox" hidden></div>
+        <div class="helper">Type 2+ letters to search</div>
       </div>
-
-      <div class="extras">
-        <div><label><input type="checkbox" class="drug-brand"> Brand?</label></div>
-        <div><label>Quantity</label><input type="number" min="0" step="1" class="drug-qty" placeholder="e.g., 90"></div>
-        <div><label>From Date</label><input type="date" class="drug-from"></div>
-        <div><label>To Date</label><input type="date" class="drug-to"></div>
+      <div>
+        <label>Dosage</label>
+        <select class="drug-dosage" required disabled>
+          <option value="">-- Select dosage --</option>
+        </select>
+        <div class="helper">Enabled after picking a generic</div>
       </div>
+      <div>
+        <label>Product / Route (NDC)</label>
+        <select class="drug-product" disabled>
+          <option value="">-- Auto --</option>
+        </select>
+        <input type="hidden" class="drug-ndc">
+        <div class="helper">Shown if multiple products exist</div>
+      </div>
+      <div>
+        <label>Frequency</label>
+        <select class="drug-frequency">
+          <option value="">-- Select --</option>
+          <option>PerDay</option><option>PerWeek</option>
+          <option>Per30Days</option><option>Per60Days</option><option>Per90Days</option>
+        </select>
+      </div>
+      <div>
+        <button type="button" class="remove-btn">Remove</button>
+      </div>
+    </div>
+    <div class="extras">
+      <div><label><input type="checkbox" class="drug-brand"> Brand?</label></div>
+      <div><label>Quantity</label><input type="number" min="0" step="1" class="drug-qty" placeholder="e.g., 90"></div>
+      <div><label>From Date</label><input type="date" class="drug-from"></div>
+      <div><label>To Date</label><input type="date" class="drug-to"></div>
+    </div>
+    <div class="meta helper" data-role="meta-line"></div>
+  `;
 
-      <div class="meta helper" data-role="meta-line"></div>
-    `;
+  container.appendChild(wrap);
 
-    container.appendChild(wrap);
+  const nameInput = wrap.querySelector('.drug-name');
+  const doseSelect = wrap.querySelector('.drug-dosage');
+  const prodSelect = wrap.querySelector('.drug-product');
+  const ndcHidden  = wrap.querySelector('.drug-ndc');
+  const metaLine   = wrap.querySelector('[data-role="meta-line"]');
+  const acList     = wrap.querySelector('.ac-list');
 
-    // Grab elements by CLASS (matches markup)
-    const nameInput = wrap.querySelector('.drug-name');
-    const doseSelect = wrap.querySelector('.drug-dosage');
-    const prodSelect = wrap.querySelector('.drug-product');
-    const ndcHidden  = wrap.querySelector('.drug-ndc');
-    const metaLine   = wrap.querySelector('[data-role="meta-line"]');
-    const acList     = wrap.querySelector('.ac-list');
+  wrap.querySelector('.remove-btn').addEventListener('click', () => { wrap.remove(); renumberDrugRows(); });
 
-    // Remove row
-    wrap.querySelector('.remove-btn').addEventListener('click', () => { wrap.remove(); renumberDrugRows(); });
-
-    // Live autocomplete
-    const onInput = debounce(() => {
-      const results = searchGenerics(nameInput.value, window.__catalog);
-      renderAC(acList, results, pickedName => { setGeneric(pickedName, { nameInput, doseSelect, prodSelect, ndcHidden, metaLine }, window.__catalog); hideAC(acList); });
-    }, 120);
-    nameInput.addEventListener('input', onInput);
-
-    // Keyboard nav
-    let acIndex = -1;
-    nameInput.addEventListener('keydown', (e) => {
-      const items = !acList.hidden ? Array.from(acList.querySelectorAll('.ac-item')) : [];
-      if (!items.length) return;
-      if (e.key === 'ArrowDown') { e.preventDefault(); acIndex = (acIndex + 1) % items.length; markAC(items, acIndex); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); acIndex = (acIndex - 1 + items.length) % items.length; markAC(items, acIndex); }
-      else if (e.key === 'Enter') { e.preventDefault(); (acIndex >= 0 ? items[acIndex] : items[0])?.click(); }
-      else if (e.key === 'Escape') { hideAC(acList); }
+  const onInput = debounce(() => {
+    const results = searchGenerics(nameInput.value, window.__catalog);
+    renderAC(acList, results, pickedName => {
+      setGeneric(pickedName, { nameInput, doseSelect, prodSelect, ndcHidden, metaLine }, window.__catalog);
+      hideAC(acList);
     });
+  }, 120);
+  nameInput.addEventListener('input', onInput);
 
-    nameInput.addEventListener('blur', () => setTimeout(() => hideAC(acList), 120));
+  let acIndex = -1;
+  nameInput.addEventListener('keydown', (e) => {
+    const items = !acList.hidden ? Array.from(acList.querySelectorAll('.ac-item')) : [];
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); acIndex = (acIndex + 1) % items.length; markAC(items, acIndex); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); acIndex = (acIndex - 1 + items.length) % items.length; markAC(items, acIndex); }
+    else if (e.key === 'Enter')   { e.preventDefault(); (acIndex >= 0 ? items[acIndex] : items[0])?.click(); }
+    else if (e.key === 'Escape')  { hideAC(acList); }
+  });
+  nameInput.addEventListener('blur', () => setTimeout(() => hideAC(acList), 120));
 
-    doseSelect.addEventListener('change', () => {
-      const entry = window.__catalog.find(c => c.name === nameInput.value.trim());
-      applyProductsForDose(entry, doseSelect.value, { prodSelect, ndcHidden, metaLine });
-    });
-  }
+  doseSelect.addEventListener('change', () => {
+    const entry = window.__catalog.find(c => c.name === nameInput.value.trim());
+    applyProductsForDose(entry, doseSelect.value, { prodSelect, ndcHidden, metaLine });
+  });
+}
+</script>
 
   function renderAC(container, items, onPick) {
     container.innerHTML = '';
