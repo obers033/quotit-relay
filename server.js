@@ -40,7 +40,11 @@ app.post("/relay/logquote", async (req, res) => {
 // Relay MembersDrugs submission to Quotit
 app.post("/relay/membersdrugs", async (req, res) => {
   try {
-    const upstream = await fetch("https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs", {
+    const base = "https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs";
+    const qs = new URLSearchParams(req.query).toString(); // pass through ?_method=...&_session=...
+    const upstreamUrl = qs ? `${base}?${qs}` : base;
+
+    const upstream = await fetch(upstreamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body)
@@ -52,6 +56,7 @@ app.post("/relay/membersdrugs", async (req, res) => {
     res.status(502).json({ error: "membersdrugs relay failed", detail: String(err) });
   }
 });
+
 
 // Serve static HTML form
 app.use(express.static("public"));
