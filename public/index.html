@@ -164,7 +164,7 @@
   <p class="helper">Type a <strong>generic name</strong> → choose allowed <strong>dosage</strong>. If multiple products exist, pick a <strong>Product / Route (NDC)</strong>.</p>
 </form>
 
-<!-- ===== Contact Drugs JSON submit ===== -->
+<!-- ===== Contact Drugs JSON/form submit ===== -->
 <div class="section-card">
   <h3>Contact Drugs API Settings</h3>
   <div class="grid">
@@ -45972,7 +45972,7 @@
     relay: true, // using your Render relay
     RELAY_URLS: {
       lead: "/relay/logquote",
-      drugs: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw"  // ← query flags required by Quotit
+      drugs: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw" // ← flags for form endpoint
     }
   };
 
@@ -45982,13 +45982,21 @@
     WebsiteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52"
   };
 
+  // Map UI frequency → numeric code used by SaveMemberPrescriptions
+  const FREQUENCY_CODE = {
+    PerDay: 1,
+    PerWeek: 2,
+    Per30Days: 8,
+    Per60Days: 10,
+    Per90Days: 12
+  };
+
   /* ====== Utils ====== */
   const toMMDDYYYY = (iso) => { const m = iso && iso.match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/); return m ? `${m[2]}/${m[3]}/${m[1]}` : ""; };
   const debounce=(fn,ms=120)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
   const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const log = (msg) => { const box = document.getElementById('chainStatus'); box.textContent += (box.textContent ? "\n" : "") + msg; };
 
-  // Quotit drugs date/times
   function toLocalDateTime(dateInputValue) { return dateInputValue ? `${dateInputValue}T00:00:00` : ""; }
   function nowLocalTimestamp() {
     const d = new Date(), pad=n=>String(n).padStart(2,'0'), ms=String(d.getMilliseconds()).padStart(3,'0');
@@ -46067,7 +46075,7 @@
       div.className = 'ac-item';
       div.setAttribute('role', 'option');
       div.innerHTML = `<span class="ac-name">${esc(it.name)}</span><span class="ac-sub"> • ${it.routes.join('/') || 'route n/a'} • ${it.doses.join(', ') || 'dosages n/a'}</span>`;
-      div.addEventListener('mousedown', e => e.preventDefault()); // keep focus
+      div.addEventListener('mousedown', e => e.preventDefault());
       div.addEventListener('click', () => onPick(it.name));
       container.appendChild(div);
     }
@@ -46139,7 +46147,7 @@
     metaLine.insertAdjacentHTML('beforeend', ' ' + doseChip);
   }
 
-  /* ====== Build nested MembersDrugs payload ====== */
+  /* ====== Build nested MembersDrugs JSON payload (SubmitMemberDrugs JSON mode) ====== */
   function buildContactDrugsPayload() {
     const remote = (document.getElementById('RemoteAccessKey')?.value || DEFAULT_DRUGS.RemoteAccessKey).trim();
     const website = (document.getElementById('WebsiteAccessKey')?.value || DEFAULT_DRUGS.WebsiteAccessKey).trim();
@@ -46189,7 +46197,36 @@
     };
   }
 
-  /* ====== Add drug row (fixed selectors) ====== */
+  /* ====== Build modelStr for SaveMemberPrescriptions (form-POST mode) ====== */
+  function buildSaveMemberPrescriptionsModel() {
+    const websiteId = (document.querySelector('input[name="brokerID"]')?.value || "").trim();
+    const contactID = (document.getElementById('ContactId')?.value || "").trim();
+    const memberGuid = (document.getElementById('MemberGUID')?.value || "").trim();
+
+    const rows = Array.from(document.querySelectorAll('.drug-entry'));
+    const items = rows.map(row => {
+      const name = row.querySelector('.drug-name')?.value?.trim() || "";
+      const dose = row.querySelector('.drug-dosage')?.value?.trim() || "";
+      const ndc  = row.querySelector('.drug-ndc')?.value?.trim() || "";
+      const qty  = row.querySelector('.drug-qty')?.value?.trim() || "1";
+      const isBrand = row.querySelector('.drug-brand')?.checked || false;
+      const freqTxt = row.querySelector('.drug-frequency')?.value?.trim() || "";
+      const freqNum = FREQUENCY_CODE[freqTxt] ?? 0;
+
+      return {
+        NDC: ndc,
+        DrugName: [name, dose].filter(Boolean).join(' ') + " - ",
+        Quantity: Number(qty) || 1,
+        MemberGuid: memberGuid,     // exact casing per sample
+        IsBrand: Boolean(isBrand),
+        Frequency: Number(freqNum)
+      };
+    }).filter(x => x.DrugName || x.NDC);
+
+    return { websiteId, contactID, modelStr: JSON.stringify(items) };
+  }
+
+  /* ====== Add drug row ====== */
   function addDrugRow(index, catalog) {
     const container = document.getElementById('drug-container');
     const wrap = document.createElement('div');
@@ -46330,7 +46367,7 @@
     log(`✓ Extracted ContactId: ${contactId}`);
     document.getElementById('ContactId').value = contactId;
 
-    // POST contact drugs JSON immediately
+    // POST contact drugs JSON or form immediately
     await sendContactDrugs(true);
   });
 
@@ -46377,26 +46414,54 @@
     const endpointInput = document.getElementById('drugsEndpoint').value.trim();
     const endpoint = endpointInput || DEFAULT_DRUGS.endpoint;
 
-    const payload = buildContactDrugsPayload();
-
-    // Require numeric ContactId unless FamilyId provided
-    if (!payload.FamilyId) {
-      if (!/^\d+$/.test(payload.ContactId)) {
-        log("❗ ContactId must be numeric (or provide FamilyId).");
-        return;
-      }
-    }
+    // Are we calling SaveMemberPrescriptions? If so, use the form POST style
+    const isSaveMemberPrescriptions = /_method=SaveMemberPrescriptions/i.test(endpoint) ||
+                                      /_method=SaveMemberPrescriptions/i.test(CONFIG.RELAY_URLS.drugs);
 
     const url = CONFIG.relay ? CONFIG.RELAY_URLS.drugs : endpoint;
     log(`→ Posting MembersDrugs to ${url} ...`);
 
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json,text/plain" },
-        body: JSON.stringify(payload)
-      });
-      const text = await res.text();
+      let res, text;
+
+      if (isSaveMemberPrescriptions) {
+        // Build form fields
+        const { websiteId, contactID, modelStr } = buildSaveMemberPrescriptionsModel();
+
+        if (!/^\d+$/.test(contactID || "")) { log("❗ ContactId must be numeric for SaveMemberPrescriptions."); return; }
+        if (!websiteId) { log("❗ websiteId (Broker/Website ID) is required for SaveMemberPrescriptions."); return; }
+        if (!modelStr || modelStr === "[]") { log("❗ No drugs to send (modelStr is empty)."); return; }
+
+        const form = new URLSearchParams();
+        form.set('websiteId', websiteId);
+        form.set('contactID', contactID);
+        form.set('modelStr', modelStr);
+
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Accept":"application/json,text/plain" },
+          body: form.toString()
+        });
+        text = await res.text();
+
+      } else {
+        // JSON API branch
+        const payload = buildContactDrugsPayload();
+
+        // Require numeric ContactId unless FamilyId provided
+        if (!payload.FamilyId && !/^\d+$/.test(payload.ContactId || "")) {
+          log("❗ ContactId must be numeric (or provide FamilyId).");
+          return;
+        }
+
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json,text/plain" },
+          body: JSON.stringify(payload)
+        });
+        text = await res.text();
+      }
+
       let msg = `✓ Drugs response status: ${res.status}\n${text}`;
       try {
         const json = JSON.parse(text);
@@ -46405,6 +46470,7 @@
         }
       } catch {}
       log(msg);
+
     } catch (err) {
       log(`❗ Drugs POST failed: ${err?.message || err}`);
     }
