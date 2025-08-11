@@ -102,7 +102,10 @@
           <input id="memberId" placeholder="e.g. 9c1e... (string)" />
         </div>
       </div>
-
+<div>
+  <label>ContactId (optional)</label>
+  <input id="contactId" placeholder="e.g. 67890" />
+</div>
       <div class="row">
         <button class="secondary" id="btnLoad">Load current drugs</button>
         <button class="ghost" id="btnLoadHistory">Load incl. history</button>
@@ -348,13 +351,17 @@ $('#btnLoadHistory').addEventListener('click', ()=> loadMember(true));
 async function loadMember(includeHistory){
   currentMember = {
     familyId: $('#familyId').value.trim() || null,
-    contactId: null,
+    contactId: $('#contactId') ? ($('#contactId').value.trim() || null) : null,
     memberId: $('#memberId').value.trim() || null,
     memberGUID: null,
     includeHistory
   };
-  if(!currentMember.familyId && !currentMember.contactId){ toast('Provide FamilyId or ContactId', 'error'); return; }
-  if(!currentMember.memberId && !currentMember.memberGUID){ toast('Provide MemberId or MemberGUID', 'error'); return; }
+  if(!currentMember.familyId && !currentMember.contactId){
+    toast('Provide FamilyId or ContactId', 'error'); return;
+  }
+  if(!currentMember.memberId && !currentMember.memberGUID){
+    toast('Provide MemberId or MemberGUID', 'error'); return;
+  }
 
   const resp = await postActWS('GetMemberDrugs', {
     RemoteAccessKey: null, WebsiteAccessKey: null,
@@ -367,9 +374,13 @@ async function loadMember(includeHistory){
 
   const rows = (resp.MembersDrugs||[]).flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
   cachedRows = rows;
-  $('#memberLabel').textContent = `${rows.length} drug(s) found for member ${currentMember.memberId||currentMember.memberGUID}` + (includeHistory?' (incl. history)':'');
+  const msg = rows.length
+    ? `${rows.length} drug(s) found for member ${currentMember.memberId||currentMember.memberGUID}` + (includeHistory?' (incl. history)':'')
+    : 'No drugs found for the supplied IDs.';
+  $('#memberLabel').textContent = msg;
   renderTable();
 }
+
 
 function renderTable(){
   const tb = $('#tbody'); tb.innerHTML='';
