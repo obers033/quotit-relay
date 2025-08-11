@@ -103,11 +103,11 @@
         </div>
         <div>
           <label>MemberId (optional)</label>
-          <input id="memberId" placeholder="e.g. abc123 (string)" />
+          <input id="memberId" placeholder="e.g. 1 (string)" />
         </div>
         <div>
           <label>MemberGUID (optional)</label>
-          <input id="memberGUID" placeholder="e.g. 9c1e-...-uuid" />
+          <input id="memberGUID" placeholder="e.g. 855F...E43D6" />
         </div>
       </div>
 
@@ -155,17 +155,18 @@
         </div>
         <div>
           <label>Frequency</label>
+          <!-- STRING ENUM values -->
           <select id="freq">
             <option value="">--</option>
-            <option value="1">Monthly</option>
-            <option value="2">Daily</option>
-            <option value="3">Weekly</option>
-            <option value="4">Quarterly</option>
-            <option value="5">Annually</option>
-            <option value="6">SemiAnnually</option>
-            <option value="7">Per30Days</option>
-            <option value="8">Per60Days</option>
-            <option value="9">Per90Days</option>
+            <option value="Monthly">Monthly</option>
+            <option value="Daily">Daily</option>
+            <option value="Weekly">Weekly</option>
+            <option value="Quarterly">Quarterly</option>
+            <option value="Annually">Annually</option>
+            <option value="SemiAnnually">SemiAnnually</option>
+            <option value="Per30Days">Per30Days</option>
+            <option value="Per60Days">Per60Days</option>
+            <option value="Per90Days">Per90Days</option>
           </select>
         </div>
         <div>
@@ -182,7 +183,7 @@
         <button class="primary" id="btnAdd">Add Drug</button>
         <button id="btnClear" class="ghost">Clear fields</button>
       </div>
-      <div class="hint">NDC, Drug Name, and From Date are required. If you set Quantity, set Frequency too.</div>
+      <div class="hint">NDC, Drug Name, and From Date are required. If you set Quantity, set Frequency (string enum) too.</div>
     </section>
   </div>
 
@@ -250,6 +251,7 @@ function show(obj){ try{ return JSON.stringify(obj, null, 2);}catch{ return Stri
 let currentMember = { familyId:null, contactId:null, memberId:null, memberGUID:null, includeHistory:false };
 let cachedRows = [];
 let selectedDrug = null;
+let lastMembers = []; // cache of last-known members
 
 // ===== Remember Keys (sessionStorage) =====
 function loadSavedKeys(){
@@ -271,9 +273,10 @@ function saveKeysIfOpted(){
     sessionStorage.removeItem(CONFIG.storageKeys.wak);
   }
 }
-$('#rememberKeys').addEventListener('change', saveKeysIfOpted);
-$('#rak').addEventListener('input', saveKeysIfOpted);
-$('#wak').addEventListener('input', saveKeysIfOpted);
+document.addEventListener('change', e=>{
+  if(e.target && (e.target.id==='rememberKeys')) saveKeysIfOpted();
+});
+['rak','wak'].forEach(id=> document.addEventListener('input', e=>{ if(e.target && e.target.id===id) saveKeysIfOpted(); }));
 $('#clearKeys').addEventListener('click', ()=>{
   sessionStorage.removeItem(CONFIG.storageKeys.rak);
   sessionStorage.removeItem(CONFIG.storageKeys.wak);
@@ -350,7 +353,7 @@ $('#drugSearch').addEventListener('input', (e)=>{
 
 async function searchDrugs(keyword){
   const data = await postActWS('SearchRxDrugs', {
-    AccessKeys: {}, // proxy injects; direct requires RAK/WAK (added above)
+    AccessKeys: {}, // proxy injects; direct requires RAK/WAK
     Inputs: { Keyword: keyword }
   });
   const list = (data?.Drugs || []).slice(0, 30);
@@ -400,7 +403,10 @@ async function loadMember(includeHistory){
       IncludeHistoricalData: !!includeHistory
     });
 
-    const rows = (resp?.MembersDrugs||[]).flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
+    const buckets = resp?.MembersDrugs || [];
+    lastMembers = buckets.map(m => ({ MemberId: String(m.MemberId || ''), MemberGUID: String(m.MemberGUID || '') }));
+
+    const rows = buckets.flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
     cachedRows = rows;
     const msg = rows.length
       ? `${rows.length} drug(s) found` + (mid||mg ? ` for member ${mid||mg}` : ' (all members)') + (includeHistory?' · incl. history':'')
@@ -441,7 +447,7 @@ function renderTable(){
 window.prefill = (i)=>{
   const r = cachedRows[i];
   $('#ndc').value = r.NDC; $('#drugName').value = r.DrugName; $('#isBrand').value = r.IsBrand?'true':'false';
-  $('#qty').value = r.Quantity ?? ''; $('#freq').value = r.Frequency ?? '';
+  $('#qty').value = r.Quantity ?? ''; $('#freq').value = r.Frequency || '';
   $('#fromDate').value = r.FromDate ? r.FromDate.substring(0,10) : ''; $('#toDate').value = r.ToDate ? r.ToDate.substring(0,10) : '';
   selectedDrug = { ndc:r.NDC, name:r.DrugName, isBrand:!!r.IsBrand, createdTime:r.CreatedTime };
   toast('Loaded drug into editor. Edit then click “Add Drug” to save changes as Edit.');
@@ -457,10 +463,7 @@ window.deleteDrug = async (i)=>{
   }catch(e){ toast(e.message,'error');}
 };
 
-function freqLabel(n){
-  const map = {1:'Monthly',2:'Daily',3:'Weekly',4:'Quarterly',5:'Annually',6:'SemiAnnually',7:'Per30Days',8:'Per60Days',9:'Per90Days'};
-  return map[n] || '–';
-}
+function freqLabel(v){ return v || '–'; }
 
 // ====== ADD / EDIT ======
 $('#btnAdd').addEventListener('click', async ()=>{
@@ -470,12 +473,12 @@ $('#btnAdd').addEventListener('click', async ()=>{
       DrugName: $('#drugName').value.trim(),
       IsBrand: $('#isBrand').value === 'true',
       Quantity: $('#qty').value ? Number($('#qty').value) : undefined,
-      Frequency: $('#qty').value ? Number($('#freq').value) : undefined,
+      Frequency: $('#qty').value ? $('#freq').value : undefined, // STRING ENUM
       FromDate: $('#fromDate').value || new Date().toISOString().slice(0,10),
       ToDate: $('#toDate').value || undefined
     };
     if(!drug.NDC || !drug.DrugName || !drug.FromDate) { toast('NDC, Drug Name, From Date are required', 'error'); return; }
-    if(drug.Quantity && !drug.Frequency){ toast('Frequency is required when Quantity is provided', 'error'); return; }
+    if(drug.Quantity && !drug.Frequency){ toast('Frequency (string enum) is required when Quantity is provided', 'error'); return; }
     if(!/^\d{11}$/.test(String(drug.NDC))) { toast('NDC must be exactly 11 digits (leading zeros matter).', 'error'); return; }
 
     let submissionType = (selectedDrug && selectedDrug.createdTime) ? 'Edit' : 'Add';
@@ -494,18 +497,29 @@ $('#btnClear').addEventListener('click', ()=>{
   $('#isBrand').value='false'; $('#freq').value='';
 });
 
-// ====== SubmitMemberDrugs (with validations & diag echo) ======
+// ====== SubmitMemberDrugs (member targeting, validations, diag echo) ======
 async function submitMemberDrugs(submissionType, drugs){
   const fam = ($('#familyId').value.trim() || null);
   const con = ($('#contactId').value.trim() || null);
-  const mid = ($('#memberId').value.trim() || null);
-  const mg  = ($('#memberGUID').value.trim() || null);
+  let   mid = ($('#memberId').value.trim() || null);
+  let   mg  = ($('#memberGUID').value.trim() || null);
 
   if(!fam && !con) throw new Error('Provide FamilyId or ContactId first');
 
+  // Auto-target if we have exactly one member known
+  if(!mid && !mg && lastMembers.length === 1){
+    mid = lastMembers[0].MemberId || null;
+    mg  = lastMembers[0].MemberGUID || null;
+  }
+
   // Rule: MemberId requires FamilyId; otherwise use MemberGUID
   if(mid && !fam){
-    throw new Error('MemberId requires FamilyId. Either enter FamilyId + MemberId, or leave MemberId blank and use MemberGUID.');
+    throw new Error('MemberId requires FamilyId. Either enter FamilyId + MemberId, or use MemberGUID.');
+  }
+
+  // Must target a member
+  if(!mid && !mg){
+    throw new Error('Pick a member first (probe → “Use this member”), or enter MemberGUID.');
   }
 
   // Validate each drug
@@ -514,10 +528,9 @@ async function submitMemberDrugs(submissionType, drugs){
       if (!/^\d{11}$/.test(String(d.NDC||''))) {
         throw new Error(`NDC must be exactly 11 digits (got "${d.NDC || ''}")`);
       }
-      if (d.Quantity != null && d.Frequency == null) {
-        throw new Error('Frequency is required when Quantity is provided');
+      if (d.Quantity != null && (!d.Frequency || typeof d.Frequency !== 'string')) {
+        throw new Error('Frequency (string enum, e.g., "Per30Days") is required when Quantity is provided');
       }
-      // For Edit/Delete, API requires CreatedTime to match the record's CreatedTime.
       if ((submissionType === 'Edit' || submissionType === 'Delete' || submissionType === 'Merge') && !d.CreatedTime) {
         throw new Error(`${submissionType} requires CreatedTime on the drug record (prefill first, then submit).`);
       }
@@ -538,7 +551,7 @@ async function submitMemberDrugs(submissionType, drugs){
 
   const resp = await postActWS('SubmitMemberDrugs', body);
 
-  // Echo last request/response to Diagnostics for transparency
+  // Echo call details to diagnostics
   $('#diagOut').textContent =
     `Last URL:\n${__last.url}\n\n` +
     `Status:\n${__last.status}\n\n` +
@@ -579,10 +592,15 @@ $('#btnProbe').addEventListener('click', async ()=>{
       </div>
     `).join('');
     $('#probeOut').innerHTML = html;
+
+    // cache members from probe
+    lastMembers = members.map(m => ({ MemberId: String(m.MemberId || ''), MemberGUID: String(m.MemberGUID || '') }));
+
     window.setMember = (mid, mguid)=>{
       $('#memberId').value = mid || '';
       $('#memberGUID').value = mguid || '';
-      toast('Member selected. Now click “Load current drugs”.');
+      lastMembers = [{ MemberId: mid || null, MemberGUID: mguid || null }];
+      toast('Member selected. Now click “Load current drugs” or add a new drug.');
     };
   }catch(e){
     $('#probeOut').textContent = 'Probe error: ' + e.message;
@@ -635,6 +653,10 @@ $('#btnDiag').addEventListener('click', async ()=>{
           drugs: (gmd.MembersDrugs[0].Drugs||[]).length
         } : null
       });
+
+      // cache last known members
+      const buckets = gmd?.MembersDrugs || [];
+      lastMembers = buckets.map(m => ({ MemberId: String(m.MemberId || ''), MemberGUID: String(m.MemberGUID || '') }));
     } else {
       out.push('ℹ️ Provide FamilyId or ContactId for GetFamily/GetMemberDrugs probes.\n');
     }
