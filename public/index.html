@@ -45967,14 +45967,16 @@
   /* ========================
      CONFIG + DEFAULTS
      ======================== */
-  const CONFIG = {
-    leadEndpoint: "https://www.quotit.net/quotit/apps/epro/logquote/logquote?",
-    relay: true, // using your Render relay
-    RELAY_URLS: { lead: "/relay/logquote", drugs: "/relay/membersdrugs" }
+const CONFIG = {
+  leadEndpoint: "https://www.quotit.net/quotit/apps/epro/logquote/logquote?",
+  relay: true,
+  RELAY_URLS: {
+    lead: "/relay/logquote",
+    drugs: "/relay/membersdrugs?_method=SaveMemberPrescriptions&_session=rw"
   };
 
   const DEFAULT_DRUGS = {
-    endpoint: "https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs",
+  endpoint: "https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2/SubmitMemberDrugs?_method=SaveMemberPrescriptions&_session=rw",
     RemoteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52",
     WebsiteAccessKey: "5F58063B-D73D-40AA-B7D0-6B2C4802EC52"
   };
