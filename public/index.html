@@ -5,10 +5,7 @@
   <title>Member Medications</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root{
-      --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --accent-2:#38bdf8; --danger:#ef4444;
-      --input:#0b1220; --border:#1f2937;
-    }
+    :root{ --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --accent-2:#38bdf8; --danger:#ef4444; --input:#0b1220; --border:#1f2937; }
     *{box-sizing:border-box}
     body{margin:0;background:linear-gradient(180deg,#0b1020,#0f172a 30%);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Arial}
     header{padding:24px 20px;border-bottom:1px solid var(--border);background:rgba(17,24,39,.6);backdrop-filter:blur(6px);position:sticky;top:0;z-index:10}
@@ -18,9 +15,7 @@
     .cols-2{grid-template-columns:1fr 1fr}
     .card{background:linear-gradient(180deg,#0f172a,#0b1220);border:1px solid var(--border);border-radius:14px;padding:16px}
     label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
-    input, select, button, textarea{
-      font:inherit;color:var(--text);background:var(--input);border:1px solid var(--border);border-radius:10px;padding:10px 12px;outline:none;
-    }
+    input, select, button, textarea{font:inherit;color:var(--text);background:var(--input);border:1px solid var(--border);border-radius:10px;padding:10px 12px;outline:none}
     input::placeholder{color:#64748b}
     button{cursor:pointer;border:1px solid #334155}
     button.primary{background:linear-gradient(135deg,var(--accent),#16a34a);color:#04120a}
@@ -30,10 +25,7 @@
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .row > *{flex:1}
     .search-wrap{position:relative}
-    .dropdown{
-      position:absolute;left:0;right:0;top:100%;background:#0b1020;border:1px solid var(--border);
-      border-radius:12px;margin-top:6px;max-height:300px;overflow:auto;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)
-    }
+    .dropdown{position:absolute;left:0;right:0;top:100%;background:#0b1020;border:1px solid var(--border);border-radius:12px;margin-top:6px;max-height:300px;overflow:auto;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
     .dropdown .opt{padding:10px 12px;border-bottom:1px solid #0f172a;cursor:pointer}
     .dropdown .opt:hover{background:#0d1426}
     .muted{color:var(--muted)}
@@ -43,6 +35,7 @@
     .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid #334155;color:#a5b4fc}
     .stack{display:flex;flex-direction:column;gap:10px}
     .hint{font-size:12px;color:#93c5fd}
+    .warn{font-size:12px;color:#fca5a5}
     .toast{position:fixed;right:16px;bottom:16px;background:#0b1220;border:1px solid #1f2a44;padding:12px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);display:none}
     .toast.show{display:block}
     .spacer{height:6px}
@@ -52,14 +45,23 @@
 <body>
 <header>
   <h1>Member Medications</h1>
-  <div class="hint">Search drugs, then add/edit/delete them for a member. Data posts to your ActWS proxy. 🔨🤖🔧</div>
+  <div class="hint">Dual‑mode: secure proxy (default) or direct-to-Quotit (unsafe; testing only). 🔨🤖🔧</div>
 </header>
 
 <main>
   <div class="grid cols-2">
+    <!-- LEFT: Member & Environment -->
     <section class="card stack">
       <h2 style="margin:0 0 6px 0;font-size:16px">Member & Environment</h2>
+
       <div class="row">
+        <div>
+          <label>Mode</label>
+          <select id="mode">
+            <option value="proxy">Proxy (secure, recommended)</option>
+            <option value="direct">Direct to Quotit (unsafe)</option>
+          </select>
+        </div>
         <div>
           <label>Environment</label>
           <select id="env">
@@ -67,6 +69,23 @@
             <option value="prod">Production</option>
           </select>
         </div>
+      </div>
+
+      <div id="keysWrap" class="row" style="display:none">
+        <div>
+          <label>RemoteAccessKey (GUID)</label>
+          <input id="rak" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        </div>
+        <div>
+          <label>WebsiteAccessKey (GUID)</label>
+          <input id="wak" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        </div>
+      </div>
+      <div id="warnDirect" class="warn" style="display:none">
+        ❗ Direct mode exposes keys in the browser and can be blocked by CORS. Use only for quick testing.
+      </div>
+
+      <div class="row" style="margin-top:8px">
         <div>
           <label>FamilyId (or ContactId)</label>
           <input id="familyId" placeholder="e.g. 12345" />
@@ -76,14 +95,17 @@
           <input id="memberId" placeholder="e.g. 9c1e... (string)" />
         </div>
       </div>
+
       <div class="row">
         <button class="secondary" id="btnLoad">Load current drugs</button>
         <button class="ghost" id="btnLoadHistory">Load incl. history</button>
       </div>
+
       <div class="spacer"></div>
-      <div class="hint">Tip: Provide (FamilyId or ContactId) + (MemberId or MemberGUID).</div>
+      <div class="hint">Provide (FamilyId or ContactId) + (MemberId or MemberGUID).</div>
     </section>
 
+    <!-- RIGHT: Search/Add -->
     <section class="card stack">
       <h2 style="margin:0 0 6px 0;font-size:16px">Find a drug</h2>
       <div class="search-wrap">
@@ -143,7 +165,7 @@
         <button class="primary" id="btnAdd">Add Drug</button>
         <button id="btnClear" class="ghost">Clear fields</button>
       </div>
-      <div class="hint">NDC, Drug Name, and From Date are required. If you set Quantity, you must set Frequency.</div>
+      <div class="hint">NDC, Drug Name, and From Date are required. If you set Quantity, set Frequency too.</div>
     </section>
   </div>
 
@@ -169,10 +191,13 @@
  *  CONFIG
  *  ======================== */
 const CONFIG = {
-  // These routes are provided by your Render-hosted Node proxy (server.js)
-  endpoints: {
+  proxy: {
     stg: '/api/actws/stg',
     prod: '/api/actws/prod'
+  },
+  directBases: {
+    stg: 'https://wwwstg.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2',
+    prod: 'https://www.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2?Method=SubmitMemberDrugs'
   }
 };
 
@@ -182,24 +207,57 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const toast = (msg, type='info') => {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   t.style.borderColor = type==='error' ? '#7f1d1d' : '#1f2a44';
-  setTimeout(()=>t.classList.remove('show'), 3200);
+  setTimeout(()=>t.classList.remove('show'), 3400);
 };
 
 // State
 let currentMember = { familyId:null, contactId:null, memberId:null, memberGUID:null, includeHistory:false };
-let cachedRows = []; // rows from GetMemberDrugs (including CreatedTime)
-let selectedDrug = null; // from search results
+let cachedRows = [];
+let selectedDrug = null;
 
-// Environment select
-function baseUrl() { return CONFIG.endpoints[$('#env').value]; }
+// Mode toggling
+$('#mode').addEventListener('change', onModeChange);
+function onModeChange(){
+  const direct = $('#mode').value === 'direct';
+  $('#keysWrap').style.display = direct ? 'flex' : 'none';
+  $('#warnDirect').style.display = direct ? 'block' : 'none';
+}
+onModeChange();
 
-// ====== API WRAPPERS (to proxy) ======
-async function postActWS(method, bodyWithoutKeys) {
-  const res = await fetch(baseUrl(), {
+// Helpers
+function apiTarget(method){
+  const mode = $('#mode').value;
+  const env  = $('#env').value;
+  if (mode === 'proxy'){
+    return { url: CONFIG.proxy[env], direct:false };
+  } else {
+    // Direct mode: real Quotit REST endpoint includes the method name
+    return { url: `${CONFIG.directBases[env]}/${method}`, direct:true };
+  }
+}
+
+// ====== POST ======
+async function postActWS(method, bodySansKeys){
+  const { url, direct } = apiTarget(method);
+  let body = bodySansKeys;
+
+  if (direct){
+    // inject keys from inputs
+    const rak = $('#rak').value.trim();
+    const wak = $('#wak').value.trim();
+    if(!rak || !wak) throw new Error('RemoteAccessKey and WebsiteAccessKey are required in Direct mode');
+    body = { ...bodySansKeys, RemoteAccessKey: rak, WebsiteAccessKey: wak };
+  }
+
+  // shape request for proxy vs direct
+  const res = await fetch(url, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ method, body: bodyWithoutKeys })
+    body: JSON.stringify(direct ? body : { method, body })
   });
+
+  // CORS note: If this fails here in Direct mode with a CORS error,
+  // it's the remote server blocking browsers. Use Proxy mode.
   if(!res.ok) throw new Error('HTTP '+res.status+' '+await res.text());
   return res.json();
 }
@@ -215,7 +273,7 @@ $('#drugSearch').addEventListener('input', (e)=>{
 
 async function searchDrugs(keyword){
   const data = await postActWS('SearchRxDrugs', {
-    AccessKeys: {}, // keys are injected in the proxy
+    AccessKeys: {}, // proxy injects; direct requires RAK/WAK (added above)
     Inputs: { Keyword: keyword }
   });
   const list = (data.Drugs || []).slice(0, 30);
@@ -240,14 +298,14 @@ async function searchDrugs(keyword){
   dd.style.display = dd.childElementCount ? 'block' : 'none';
 }
 
-// ====== GET MEMBER DRUGS ======
+// ====== LOAD MEMBER DRUGS ======
 $('#btnLoad').addEventListener('click', ()=> loadMember(false));
 $('#btnLoadHistory').addEventListener('click', ()=> loadMember(true));
 
 async function loadMember(includeHistory){
   currentMember = {
     familyId: $('#familyId').value.trim() || null,
-    contactId: null, // wire ContactId here if you use it
+    contactId: null,
     memberId: $('#memberId').value.trim() || null,
     memberGUID: null,
     includeHistory
@@ -329,7 +387,6 @@ $('#btnAdd').addEventListener('click', async ()=>{
     if(!drug.NDC || !drug.DrugName || !drug.FromDate) { toast('NDC, Drug Name, From Date are required', 'error'); return; }
     if(drug.Quantity && !drug.Frequency){ toast('Frequency is required when Quantity is provided', 'error'); return; }
 
-    // Edit when we have CreatedTime from a prefetched row; otherwise Add
     let submissionType = (selectedDrug && selectedDrug.createdTime) ? 'Edit' : 'Add';
     if(submissionType==='Edit'){ drug.CreatedTime = selectedDrug.createdTime; }
     await submitMemberDrugs(submissionType, [drug]);
