@@ -420,8 +420,8 @@ async function runDrugSearch(keyword){
 
   // ⬇️ IMPORTANT: use top-level keys so proxy injects credentials
   const data = await postActWS('SearchRxDrugs', {
-    RemoteAccessKey: null,
-    WebsiteAccessKey: null,
+    RemoteAccessKey: 5F58063B-D73D-40AA-B7D0-6B2C4802EC52,
+    WebsiteAccessKey: 5F58063B-D73D-40AA-B7D0-6B2C4802EC52,
     Inputs: { Keyword: keyword }
   });
 
