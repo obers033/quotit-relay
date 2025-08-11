@@ -115,7 +115,7 @@
       <div id="probeOut" class="muted" style="margin-top:6px"></div>
 
       <div class="spacer"></div>
-      <div class="hint">Enter <strong>FamilyId</strong> or <strong>ContactId</strong>. Member filters are optional.</div>
+      <div class="hint">Enter <strong>FamilyId</strong> or <strong>ContactId</strong>. Member filter is optional.</div>
     </section>
 
     <!-- RIGHT: Search/Add -->
@@ -234,12 +234,12 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const toast = (msg, type='info') => {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  t.style.borderColor = type==='error' ? '#7f1d1d' : '#1f2a4';
+  t.style.borderColor = type==='error' ? '#7f1d1d' : '#1f2a44';
   setTimeout(()=>t.classList.remove('show'), 3400);
 };
 
 // --- debug capture ---
-let __last = { url:'', payload:null, response:null, error:null };
+let __last = { url:'', payload:null, response:null, error:null, status:null, bodyText:null };
 function show(obj){ try{ return JSON.stringify(obj, null, 2);}catch{ return String(obj);} }
 
 // State
@@ -313,24 +313,26 @@ async function postActWS(method, bodySansKeys){
   }
 
   const payload = direct ? body : { method, body };
-  __last = { url, payload, response:null, error:null };
+  __last = { url, payload, response:null, error:null, status:null, bodyText:null };
 
   const res = await fetch(url, {
     method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:{'Content-Type':'application/json; charset=utf-8'},
     body: JSON.stringify(payload)
   });
 
+  __last.status = res.status;
   let data, text;
   try { data = await res.clone().json(); } catch { text = await res.text(); }
+  __last.bodyText = text || null;
 
   if(!res.ok){
     __last.error = { status: res.status, body: text || data };
-    throw new Error(`HTTP ${res.status}: ${text || show(data) || '(no body)'}`);
+    throw new Error(`HTTP ${res.status}: ${text || (data ? JSON.stringify(data) : '(no body)')}`);
   }
 
-  __last.response = data ?? text;
-  return data ?? text;
+  __last.response = data ?? text ?? null;
+  return data ?? text ?? null;
 }
 
 // ====== SEARCH DRUGS (SearchRxDrugs) ======
@@ -388,9 +390,9 @@ async function loadMember(includeHistory){
   try{
     const resp = await postActWS('GetMemberDrugs', {
       RemoteAccessKey: null, WebsiteAccessKey: null,
-      FamilyId: currentMember.familyId ? Number(currentMember.familyId) : undefined,
-      ContactId: currentMember.contactId ? Number(currentMember.contactId) : undefined,
-      MemberId: currentMember.memberId || undefined,
+      FamilyId: currentMember.familyId ? currentMember.familyId.toString() : undefined,
+      ContactId: currentMember.contactId ? currentMember.contactId.toString() : undefined,
+      MemberId: currentMember.memberId || undefined,          // already a string from the input
       MemberGUID: currentMember.memberGUID || undefined,
       IncludeHistoricalData: !!includeHistory
     });
@@ -493,10 +495,10 @@ async function submitMemberDrugs(submissionType, drugs){
 
   const body = {
     RemoteAccessKey:null, WebsiteAccessKey:null,
-    FamilyId: currentMember.familyId ? Number(currentMember.familyId) : undefined,
-    ContactId: currentMember.contactId ? Number(currentMember.contactId) : undefined,
+    FamilyId: currentMember.familyId ? currentMember.familyId.toString() : undefined,
+    ContactId: currentMember.contactId ? currentMember.contactId.toString() : undefined,
     MembersDrugs: [{
-      MemberId: currentMember.memberId || undefined,
+      MemberId: currentMember.memberId || undefined,      // already a string from the input
       MemberGUID: currentMember.memberGUID || undefined,
       SubmissionType: submissionType, // Add | Edit | Merge | Delete
       Drugs: (drugs && drugs.length) ? drugs : undefined
@@ -514,8 +516,8 @@ $('#btnProbe').addEventListener('click', async ()=>{
   try{
     const body = {
       RemoteAccessKey: null, WebsiteAccessKey: null,
-      FamilyId: familyId ? Number(familyId) : undefined,
-      ContactId: contactId ? Number(contactId) : undefined
+      FamilyId: familyId ? familyId.toString() : undefined,
+      ContactId: contactId ? contactId.toString() : undefined
     };
     const resp = await postActWS('GetFamily', body);
     const members = (resp?.Family?.Members) || [];
@@ -533,7 +535,7 @@ $('#btnProbe').addEventListener('click', async ()=>{
     $('#probeOut').innerHTML = html;
     window.setMember = (mid, mguid)=>{
       $('#memberId').value = mid || '';
-      // If you later add a MemberGUID field, set it here as well.
+      // If you add a MemberGUID field later, set it here too.
       toast('Member selected. Now click “Load current drugs”.');
     };
   }catch(e){
@@ -543,7 +545,13 @@ $('#btnProbe').addEventListener('click', async ()=>{
 
 // ====== Diagnostics ======
 $('#btnLast').addEventListener('click', ()=>{
-  $('#diagOut').textContent = `Last URL:\n${__last.url}\n\nPayload:\n${show(__last.payload)}\n\nResponse:\n${show(__last.response)}\n\nError:\n${show(__last.error)}`;
+  $('#diagOut').textContent =
+    `Last URL:\n${__last.url}\n\n` +
+    `Status:\n${__last.status}\n\n` +
+    `Payload:\n${show(__last.payload)}\n\n` +
+    `Response (parsed):\n${show(__last.response)}\n\n` +
+    `Response (raw text):\n${__last.bodyText || '(none)'}\n\n` +
+    `Error:\n${show(__last.error)}`;
 });
 
 $('#btnDiag').addEventListener('click', async ()=>{
@@ -554,7 +562,7 @@ $('#btnDiag').addEventListener('click', async ()=>{
   const log = (label, obj)=> out.push(`▶ ${label}:\n${show(obj)}\n`);
 
   try{
-    // 1) Sanity: public-ish data path (verifies keys/env)
+    // 1) Sanity: verifies keys/env via drug search
     const rx = await postActWS('SearchRxDrugs', { AccessKeys:{}, Inputs:{ Keyword:'atorvastatin' }});
     log('SearchRxDrugs atorvastatin (count)', { count: (rx?.Drugs ? rx.Drugs.length : 0) });
 
@@ -562,16 +570,16 @@ $('#btnDiag').addEventListener('click', async ()=>{
     if (familyId || contactId){
       const gf = await postActWS('GetFamily', {
         RemoteAccessKey:null, WebsiteAccessKey:null,
-        FamilyId: familyId ? Number(familyId) : undefined,
-        ContactId: contactId ? Number(contactId) : undefined
+        FamilyId: familyId ? familyId.toString() : undefined,
+        ContactId: contactId ? contactId.toString() : undefined
       });
       log('GetFamily.Members (first 3)', Array.isArray(gf?.Family?.Members) ? gf.Family.Members.slice(0,3) : gf);
 
       // 3) GetMemberDrugs WITHOUT member filter
       const gmd = await postActWS('GetMemberDrugs', {
         RemoteAccessKey:null, WebsiteAccessKey:null,
-        FamilyId: familyId ? Number(familyId) : undefined,
-        ContactId: contactId ? Number(contactId) : undefined,
+        FamilyId: familyId ? familyId.toString() : undefined,
+        ContactId: contactId ? contactId.toString() : undefined,
         IncludeHistoricalData: false
       });
       log('GetMemberDrugs summary', {
