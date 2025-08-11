@@ -81,6 +81,13 @@
           <input id="wak" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
         </div>
       </div>
+      <div class="row" id="rememberWrap" style="display:none;align-items:center">
+        <label style="display:flex;gap:8px;align-items:center">
+          <input type="checkbox" id="rememberKeys" />
+          <span class="muted">Remember keys for this tab (sessionStorage)</span>
+        </label>
+        <button id="clearKeys" class="ghost" style="flex:0 0 auto">Clear saved</button>
+      </div>
       <div id="warnDirect" class="warn" style="display:none">
         ❗ Direct mode exposes keys in the browser and can be blocked by CORS. Use only for quick testing.
       </div>
@@ -197,7 +204,12 @@ const CONFIG = {
   },
   directBases: {
     stg: 'https://wwwstg.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2',
-    prod: 'https://www.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2?Method=SubmitMemberDrugs'
+    prod: 'https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2?Method=SubmitMemberDrugs'
+  },
+  storageKeys: {
+    rak: '5F58063B-D73D-40AA-B7D0-6B2C4802EC52',
+    wak: '5F58063B-D73D-40AA-B7D0-6B2C4802EC52',
+    remember: 'actws_remember'
   }
 };
 
@@ -215,14 +227,49 @@ let currentMember = { familyId:null, contactId:null, memberId:null, memberGUID:n
 let cachedRows = [];
 let selectedDrug = null;
 
+// ===== Remember Keys (sessionStorage) =====
+function loadSavedKeys(){
+  const remember = sessionStorage.getItem(CONFIG.storageKeys.remember) === '1';
+  $('#rememberKeys').checked = remember;
+  if (remember){
+    $('#rak').value = sessionStorage.getItem(CONFIG.storageKeys.rak) || '';
+    $('#wak').value = sessionStorage.getItem(CONFIG.storageKeys.wak) || '';
+  }
+}
+function saveKeysIfOpted(){
+  const remember = $('#rememberKeys').checked;
+  sessionStorage.setItem(CONFIG.storageKeys.remember, remember ? '1' : '0');
+  if (remember){
+    sessionStorage.setItem(CONFIG.storageKeys.rak, $('#rak').value.trim());
+    sessionStorage.setItem(CONFIG.storageKeys.wak, $('#wak').value.trim());
+  } else {
+    sessionStorage.removeItem(CONFIG.storageKeys.rak);
+    sessionStorage.removeItem(CONFIG.storageKeys.wak);
+  }
+}
+$('#rememberKeys').addEventListener('change', saveKeysIfOpted);
+$('#rak').addEventListener('input', saveKeysIfOpted);
+$('#wak').addEventListener('input', saveKeysIfOpted);
+$('#clearKeys').addEventListener('click', ()=>{
+  sessionStorage.removeItem(CONFIG.storageKeys.rak);
+  sessionStorage.removeItem(CONFIG.storageKeys.wak);
+  sessionStorage.removeItem(CONFIG.storageKeys.remember);
+  $('#rak').value = '';
+  $('#wak').value = '';
+  $('#rememberKeys').checked = false;
+  toast('Cleared keys from sessionStorage');
+});
+
 // Mode toggling
 $('#mode').addEventListener('change', onModeChange);
 function onModeChange(){
   const direct = $('#mode').value === 'direct';
   $('#keysWrap').style.display = direct ? 'flex' : 'none';
+  $('#rememberWrap').style.display = direct ? 'flex' : 'none';
   $('#warnDirect').style.display = direct ? 'block' : 'none';
+  if (direct){ loadSavedKeys(); }
 }
-onModeChange();
+onModeChange(); // initialize on first paint
 
 // Helpers
 function apiTarget(method){
@@ -231,7 +278,6 @@ function apiTarget(method){
   if (mode === 'proxy'){
     return { url: CONFIG.proxy[env], direct:false };
   } else {
-    // Direct mode: real Quotit REST endpoint includes the method name
     return { url: `${CONFIG.directBases[env]}/${method}`, direct:true };
   }
 }
@@ -249,15 +295,12 @@ async function postActWS(method, bodySansKeys){
     body = { ...bodySansKeys, RemoteAccessKey: rak, WebsiteAccessKey: wak };
   }
 
-  // shape request for proxy vs direct
   const res = await fetch(url, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(direct ? body : { method, body })
   });
 
-  // CORS note: If this fails here in Direct mode with a CORS error,
-  // it's the remote server blocking browsers. Use Proxy mode.
   if(!res.ok) throw new Error('HTTP '+res.status+' '+await res.text());
   return res.json();
 }
