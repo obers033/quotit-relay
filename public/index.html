@@ -94,25 +94,28 @@
 
       <div class="row" style="margin-top:8px">
         <div>
-          <label>FamilyId (or ContactId)</label>
+          <label>FamilyId</label>
           <input id="familyId" placeholder="e.g. 12345" />
         </div>
         <div>
-          <label>MemberId (or MemberGUID)</label>
+          <label>ContactId (alternative to FamilyId)</label>
+          <input id="contactId" placeholder="e.g. 67890" />
+        </div>
+        <div>
+          <label>MemberId (optional)</label>
           <input id="memberId" placeholder="e.g. 9c1e... (string)" />
         </div>
       </div>
-<div>
-  <label>ContactId (optional)</label>
-  <input id="contactId" placeholder="e.g. 67890" />
-</div>
+
       <div class="row">
         <button class="secondary" id="btnLoad">Load current drugs</button>
         <button class="ghost" id="btnLoadHistory">Load incl. history</button>
+        <button class="ghost" id="btnProbe">Fetch Family (probe)</button>
       </div>
+      <div id="probeOut" class="muted" style="margin-top:6px"></div>
 
       <div class="spacer"></div>
-      <div class="hint">Provide (FamilyId or ContactId) + (MemberId or MemberGUID).</div>
+      <div class="hint">Enter <strong>FamilyId</strong> or <strong>ContactId</strong>. Member filters are optional.</div>
     </section>
 
     <!-- RIGHT: Search/Add -->
@@ -207,11 +210,11 @@ const CONFIG = {
   },
   directBases: {
     stg: 'https://wwwstg.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2',
-    prod: 'https://www.quotit.net/quotit/apps/Common/ActWS/ACA/v2?Method=SubmitMemberDrugs'
+    prod: 'https://www.quotit.net/Quotit/Apps/Common/ActWS/ACA/v2'
   },
   storageKeys: {
-    rak: '5F58063B-D73D-40AA-B7D0-6B2C4802EC52',
-    wak: '5F58063B-D73D-40AA-B7D0-6B2C4802EC52',
+    rak: 'actws_rak',
+    wak: 'actws_wak',
     remember: 'actws_remember'
   }
 };
@@ -257,9 +260,7 @@ $('#clearKeys').addEventListener('click', ()=>{
   sessionStorage.removeItem(CONFIG.storageKeys.rak);
   sessionStorage.removeItem(CONFIG.storageKeys.wak);
   sessionStorage.removeItem(CONFIG.storageKeys.remember);
-  $('#rak').value = '';
-  $('#wak').value = '';
-  $('#rememberKeys').checked = false;
+  $('#rak').value = ''; $('#wak').value = ''; $('#rememberKeys').checked = false;
   toast('Cleared keys from sessionStorage');
 });
 
@@ -351,16 +352,13 @@ $('#btnLoadHistory').addEventListener('click', ()=> loadMember(true));
 async function loadMember(includeHistory){
   currentMember = {
     familyId: $('#familyId').value.trim() || null,
-    contactId: $('#contactId') ? ($('#contactId').value.trim() || null) : null,
+    contactId: $('#contactId').value.trim() || null,
     memberId: $('#memberId').value.trim() || null,
     memberGUID: null,
     includeHistory
   };
   if(!currentMember.familyId && !currentMember.contactId){
     toast('Provide FamilyId or ContactId', 'error'); return;
-  }
-  if(!currentMember.memberId && !currentMember.memberGUID){
-    toast('Provide MemberId or MemberGUID', 'error'); return;
   }
 
   const resp = await postActWS('GetMemberDrugs', {
@@ -369,21 +367,26 @@ async function loadMember(includeHistory){
     ContactId: currentMember.contactId ? Number(currentMember.contactId) : undefined,
     MemberId: currentMember.memberId || undefined,
     MemberGUID: currentMember.memberGUID || undefined,
-    IncludeHistoricalData: includeHistory ? 1 : 0
+    IncludeHistoricalData: !!includeHistory
   });
 
   const rows = (resp.MembersDrugs||[]).flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
   cachedRows = rows;
   const msg = rows.length
-    ? `${rows.length} drug(s) found for member ${currentMember.memberId||currentMember.memberGUID}` + (includeHistory?' (incl. history)':'')
+    ? `${rows.length} drug(s) found` + (currentMember.memberId||currentMember.memberGUID ? ` for member ${currentMember.memberId||currentMember.memberGUID}` : ' (all members)') + (includeHistory?' · incl. history':'')
     : 'No drugs found for the supplied IDs.';
   $('#memberLabel').textContent = msg;
   renderTable();
 }
 
-
 function renderTable(){
   const tb = $('#tbody'); tb.innerHTML='';
+  if (!cachedRows.length){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="7" class="muted">No drug records to display.</td>`;
+    tb.appendChild(tr);
+    return;
+  }
   cachedRows.forEach((r, idx)=>{
     const tr = document.createElement('tr');
     const range = (r.ToDate ? `${r.FromDate} → ${r.ToDate}` : `${r.FromDate} → …`);
@@ -456,9 +459,9 @@ $('#btnClear').addEventListener('click', ()=>{
   $('#isBrand').value='false'; $('#freq').value='';
 });
 
+// ====== SubmitMemberDrugs ======
 async function submitMemberDrugs(submissionType, drugs){
   if(!currentMember.familyId && !currentMember.contactId) throw new Error('Provide FamilyId/ContactId first');
-  if(!currentMember.memberId && !currentMember.memberGUID) throw new Error('Provide MemberId/MemberGUID first');
 
   const body = {
     RemoteAccessKey:null, WebsiteAccessKey:null,
@@ -473,6 +476,42 @@ async function submitMemberDrugs(submissionType, drugs){
   };
   return postActWS('SubmitMemberDrugs', body);
 }
+
+// ====== GetFamily (Probe) ======
+$('#btnProbe').addEventListener('click', async ()=>{
+  const familyId  = $('#familyId').value.trim() || null;
+  const contactId = $('#contactId').value.trim() || null;
+  if(!familyId && !contactId){ toast('Provide FamilyId or ContactId', 'error'); return; }
+
+  try{
+    const body = {
+      RemoteAccessKey: null, WebsiteAccessKey: null,
+      FamilyId: familyId ? Number(familyId) : undefined,
+      ContactId: contactId ? Number(contactId) : undefined
+    };
+    const resp = await postActWS('GetFamily', body);
+    const members = (resp.Family && resp.Family.Members) || [];
+    if(!members.length){ $('#probeOut').textContent = 'No members found under this ID.'; return; }
+
+    const html = members.map(m=>`
+      <div style="padding:6px 8px;border:1px solid #1f2937;border-radius:8px;margin-bottom:6px">
+        <div><strong>${(m.FirstName||'').trim()} ${(m.LastName||'').trim()}</strong></div>
+        <div class="muted" style="font-size:12px">MemberId: ${m.MemberId||'—'} · MemberGUID: ${m.MemberGUID||'—'}</div>
+        <div class="row" style="margin-top:6px">
+          <button class="ghost" onclick="setMember('${m.MemberId||''}','${m.MemberGUID||''}')">Use this member</button>
+        </div>
+      </div>
+    `).join('');
+    $('#probeOut').innerHTML = html;
+    window.setMember = (mid, mguid)=>{
+      $('#memberId').value = mid || '';
+      // If you later add a MemberGUID field, set it here as well.
+      toast('Member selected. Now click “Load current drugs”.');
+    };
+  }catch(e){
+    $('#probeOut').textContent = 'Probe error: ' + e.message;
+  }
+});
 </script>
 </body>
 </html>
