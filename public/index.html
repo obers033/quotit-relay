@@ -174,7 +174,7 @@
     <div><label for="FamilyId">FamilyId</label><input id="FamilyId" type="text" placeholder=""></div>
     <div><label for="ContactId">ContactId</label><input id="ContactId" type="text" placeholder=""></div>
     <div><label for="MemberId">MemberId</label><input id="MemberId" type="text" placeholder="1"></div>
-<div><label for="MemberGUID">MemberGUID</label><input id="MemberGUID" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+    <div><label for="MemberGUID">MemberGUID</label><input id="MemberGUID" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
   </div>
   <div class="actions">
     <button id="sendDrugsBtn" class="btn-secondary" type="button">Send Drugs Only</button>
@@ -45969,7 +45969,7 @@
      ======================== */
   const CONFIG = {
     leadEndpoint: "https://www.quotit.net/quotit/apps/epro/logquote/logquote?",
-    relay: false, // set true to post through your backend if CORS blocks
+    relay: true, // use your Render relay
     RELAY_URLS: {
       lead: "/relay/logquote",
       drugs: "/relay/membersdrugs"
@@ -45988,6 +45988,18 @@
   const debounce=(fn,ms=120)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
   const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const log = (msg) => { const box = document.getElementById('chainStatus'); box.textContent += (box.textContent ? "\n" : "") + msg; };
+
+  // 2025-08-07T00:00:00
+  function toLocalDateTime(dateInputValue) {
+    if (!dateInputValue) return "";
+    return `${dateInputValue}T00:00:00`;
+  }
+  function nowLocalTimestamp() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    const ms = String(d.getMilliseconds()).padStart(3,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
+  }
 
   /* ====== Drug data: parse & transform ====== */
   function readRawJSON() {
@@ -46034,7 +46046,7 @@
     })).sort((a,b)=>a.name.localeCompare(b.name));
   }
 
-  /* ====== Drug picker search ====== */
+  /* ====== Search ====== */
   function searchGenerics(q, catalog, limit=15){
     q = q.trim().toLowerCase();
     if (q.length < 2) return [];
@@ -46052,167 +46064,119 @@
     return scored.slice(0,limit).map(s=>s.item);
   }
 
-  /* ====== Collect current drug rows for JSON ====== */
-  function collectDrugRows() {
+  /* ====== Build Member payload (nested) ====== */
+  function buildContactDrugsPayload() {
+    const remote = (document.getElementById('RemoteAccessKey')?.value || DEFAULT_DRUGS.RemoteAccessKey).trim();
+    const website = (document.getElementById('WebsiteAccessKey')?.value || DEFAULT_DRUGS.WebsiteAccessKey).trim();
+    const familyId = (document.getElementById('FamilyId')?.value || "").trim();
+    const contactId = (document.getElementById('ContactId')?.value || "").trim();
+    const memberId = (document.getElementById('MemberId')?.value || "1").trim();
+    const memberGUID = (document.getElementById('MemberGUID')?.value || "").trim();
+
     const rows = Array.from(document.querySelectorAll('.drug-entry'));
-    return rows.map(row => {
-      const name = row.querySelector('input[id^="drugName_"]')?.value?.trim() || '';
-      const dose = row.querySelector('select[id^="drugDosage_"]')?.value?.trim() || '';
-      const ndc  = row.querySelector('[data-role="ndc"]')?.value?.trim() || '';
-      const freq = row.querySelector('input[id^="drugFreq_"]')?.value?.trim() || '';
-      const qty  = row.querySelector('[data-role="qty"]')?.value?.trim() || '';
-      const isBrand = row.querySelector('[data-role="brand"]')?.checked ? "true" : "false";
-      const fromISO = row.querySelector('[data-role="from"]')?.value || '';
-      const toISO   = row.querySelector('[data-role="to"]')?.value || '';
+    const drugs = rows.map(row => {
+      const name = row.querySelector('.drug-name')?.value?.trim() || "";
+      const dose = row.querySelector('.drug-dosage')?.value?.trim() || "";
+      const ndc  = row.querySelector('.drug-ndc')?.value?.trim() || "";
+      const freq = row.querySelector('.drug-frequency')?.value?.trim() || "";
+      const qty  = row.querySelector('.drug-qty')?.value?.trim() || "";
+      const isBrand = row.querySelector('.drug-brand')?.checked || false;
+      const fromISO = row.querySelector('.drug-from')?.value || "";
+      const toISO   = row.querySelector('.drug-to')?.value || "";
+
       return {
         NDC: ndc,
         DrugName: [name, dose].filter(Boolean).join(' '),
-        IsBrand: isBrand,
-        Quantity: qty,
-        Frequency: freq,
-        FromDate: fromISO || "",
-        ToDate: toISO || "",
-        Source: "WebForm",
-        CreatedTime: nowISO(),
-        ModifiedTime: nowISO()
+        IsBrand: Boolean(isBrand),
+        Quantity: qty ? Number(qty) : 0,
+        Frequency: freq || "",
+        FromDate: toLocalDateTime(fromISO),
+        ToDate: toLocalDateTime(toISO),
+        Source: "Member",
+        CreatedTime: nowLocalTimestamp(),
+        ModifiedTime: nowLocalTimestamp()
       };
     }).filter(d => d.DrugName || d.NDC);
-  }
-
-function buildContactDrugsPayload() {
-  const remote = (document.getElementById('RemoteAccessKey')?.value || DEFAULT_DRUGS.RemoteAccessKey).trim();
-  const website = (document.getElementById('WebsiteAccessKey')?.value || DEFAULT_DRUGS.WebsiteAccessKey).trim();
-  const familyId = (document.getElementById('FamilyId')?.value || "").trim();
-  const contactId = (document.getElementById('ContactId')?.value || "").trim();
-  const memberId = (document.getElementById('MemberId')?.value || "1").trim();
-  const memberGUID = (document.getElementById('MemberGUID')?.value || "").trim();
-
-  // Collect UI rows → drug objects
-  const rows = Array.from(document.querySelectorAll('.drug-entry'));
-  const drugs = rows.map(row => {
-    const name = row.querySelector('.drug-name')?.value?.trim() || "";
-    const dose = row.querySelector('.drug-dosage')?.value?.trim() || "";
-    const ndc  = row.querySelector('.drug-ndc')?.value?.trim() || "";
-    const freq = row.querySelector('.drug-frequency')?.value?.trim() || "";
-    const qty  = row.querySelector('.drug-qty')?.value?.trim() || "";
-    const isBrand = row.querySelector('.drug-brand')?.checked || false;
-    const fromISO = row.querySelector('.drug-from')?.value || "";
-    const toISO   = row.querySelector('.drug-to')?.value || "";
 
     return {
-      NDC: ndc,
-      DrugName: [name, dose].filter(Boolean).join(' '),
-      IsBrand: Boolean(isBrand),
-      Quantity: qty ? Number(qty) : 0,
-      Frequency: freq || "",
-      FromDate: toLocalDateTime(fromISO),
-      ToDate: toLocalDateTime(toISO),
-      Source: "Member",
-      CreatedTime: nowLocalTimestamp(),
-      ModifiedTime: nowLocalTimestamp()
+      RemoteAccessKey: remote,
+      WebsiteAccessKey: website,
+      FamilyId: familyId,
+      ContactId: contactId,
+      MembersDrugs: [
+        {
+          MemberId: memberId,
+          MemberGUID: memberGUID,
+          SubmissionType: "add",
+          MembersDrugs: drugs
+        }
+      ]
     };
-  }).filter(d => d.DrugName || d.NDC);
+  }
 
-  // Wrap per-member as required
-  return {
-    RemoteAccessKey: remote,
-    WebsiteAccessKey: website,
-    FamilyId: familyId,
-    ContactId: contactId,
-    MembersDrugs: [
-      {
-        MemberId: memberId,
-        MemberGUID: memberGUID,
-        SubmissionType: "add",
-        MembersDrugs: drugs
-      }
-    ]
-  };
-}
-
-  /* ====== Init drug picker ====== */
-  (function initDrugPicker() {
-    const raw = readRawJSON();
-    const catalog = buildCatalog(raw);
-    window.__catalog = catalog;
-
-    addDrugRow(0, catalog);
-    document.getElementById('add-drug').addEventListener('click', () => {
-      const idx = document.querySelectorAll('.drug-entry').length;
-      addDrugRow(idx, catalog);
-    });
-  })();
-
-  /* ====== Prefill defaults for Contact Drugs settings ====== */
-  (function prefillSettings(){
-    document.getElementById('drugsEndpoint').value = DEFAULT_DRUGS.endpoint;
-    document.getElementById('RemoteAccessKey').value = DEFAULT_DRUGS.RemoteAccessKey;
-    document.getElementById('WebsiteAccessKey').value = DEFAULT_DRUGS.WebsiteAccessKey;
-  })();
-
-  /* ====== Add drug row UI ====== */
+  /* ====== Add drug row UI (FIXED) ====== */
   function addDrugRow(index, catalog) {
     const container = document.getElementById('drug-container');
     const wrap = document.createElement('div');
     wrap.className = 'drug-entry';
     wrap.dataset.index = index;
 
-wrap.innerHTML = `
-  <div class="row">
-    <div style="position:relative">
-      <label>Drug ${idx+1} - Generic</label>
-      <input type="text" name="drugList[${idx}][name]" class="drug-name" autocomplete="off" placeholder="Start typing (e.g., Lisinopril)" required>
-      <div class="ac-list" role="listbox" hidden></div>
-      <div class="helper">Type 2+ letters to search</div>
-    </div>
-    <div>
-      <label>Dosage</label>
-      <select name="drugList[${idx}][dosage]" class="drug-dosage" required disabled>
-        <option value="">-- Select dosage --</option>
-      </select>
-      <div class="helper">Enabled after picking a generic</div>
-    </div>
-    <div>
-      <label>Product / Route (NDC)</label>
-      <select class="drug-product" disabled>
-        <option value="">-- Auto --</option>
-      </select>
-      <input type="hidden" name="drugList[${idx}][ndc]" class="drug-ndc">
-      <div class="helper">Shown if multiple products exist</div>
-    </div>
-    <div>
-      <label>Frequency</label>
-      <select name="drugList[${idx}][frequency]" class="drug-frequency">
-        <option value="">-- Select --</option>
-        <option>PerDay</option>
-        <option>PerWeek</option>
-        <option>Per30Days</option>
-        <option>Per60Days</option>
-        <option>Per90Days</option>
-      </select>
-    </div>
-    <div>
-      <button type="button" class="remove-btn">Remove</button>
-    </div>
-  </div>
+    wrap.innerHTML = `
+      <div class="row">
+        <div style="position:relative">
+          <label>Drug ${index+1} - Generic</label>
+          <input type="text" class="drug-name" autocomplete="off" placeholder="Start typing (e.g., Lisinopril)" required>
+          <div class="ac-list" role="listbox" hidden></div>
+          <div class="helper">Type 2+ letters to search</div>
+        </div>
+        <div>
+          <label>Dosage</label>
+          <select class="drug-dosage" required disabled>
+            <option value="">-- Select dosage --</option>
+          </select>
+          <div class="helper">Enabled after picking a generic</div>
+        </div>
+        <div>
+          <label>Product / Route (NDC)</label>
+          <select class="drug-product" disabled>
+            <option value="">-- Auto --</option>
+          </select>
+          <input type="hidden" class="drug-ndc">
+          <div class="helper">Shown if multiple products exist</div>
+        </div>
+        <div>
+          <label>Frequency</label>
+          <select class="drug-frequency">
+            <option value="">-- Select --</option>
+            <option>PerDay</option>
+            <option>PerWeek</option>
+            <option>Per30Days</option>
+            <option>Per60Days</option>
+            <option>Per90Days</option>
+          </select>
+        </div>
+        <div>
+          <button type="button" class="remove-btn">Remove</button>
+        </div>
+      </div>
 
-  <div class="extras" style="display:grid;grid-template-columns:.7fr .7fr .7fr .7fr;gap:8px;margin-top:6px;">
-    <div><label><input type="checkbox" class="drug-brand"> Brand?</label></div>
-    <div><label>Quantity</label><input type="number" min="0" step="1" class="drug-qty" placeholder="e.g., 90"></div>
-    <div><label>From Date</label><input type="date" class="drug-from"></div>
-    <div><label>To Date</label><input type="date" class="drug-to"></div>
-  </div>
+      <div class="extras">
+        <div><label><input type="checkbox" class="drug-brand"> Brand?</label></div>
+        <div><label>Quantity</label><input type="number" min="0" step="1" class="drug-qty" placeholder="e.g., 90"></div>
+        <div><label>From Date</label><input type="date" class="drug-from"></div>
+        <div><label>To Date</label><input type="date" class="drug-to"></div>
+      </div>
 
-  <div class="meta helper" data-role="meta-line"></div>
-`;
-
+      <div class="meta helper" data-role="meta-line"></div>
+    `;
 
     container.appendChild(wrap);
 
-    const nameInput = wrap.querySelector(`#drugName_${index}`);
-    const doseSelect = wrap.querySelector(`#drugDosage_${index}`);
-    const prodSelect = wrap.querySelector(`#drugProduct_${index}`);
-    const ndcHidden  = wrap.querySelector('[data-role="ndc"]');
+    // Grab elements by CLASS (matches markup)
+    const nameInput = wrap.querySelector('.drug-name');
+    const doseSelect = wrap.querySelector('.drug-dosage');
+    const prodSelect = wrap.querySelector('.drug-product');
+    const ndcHidden  = wrap.querySelector('.drug-ndc');
     const metaLine   = wrap.querySelector('[data-role="meta-line"]');
     const acList     = wrap.querySelector('.ac-list');
 
@@ -46321,23 +46285,8 @@ wrap.innerHTML = `
     const rows = document.querySelectorAll('.drug-entry');
     rows.forEach((row, i) => {
       row.dataset.index = i;
-      const name = row.querySelector(`#drugName_${i}`) || row.querySelector('input[id^="drugName_"]');
-      const dose = row.querySelector(`#drugDosage_${i}`) || row.querySelector('select[id^="drugDosage_"]');
-      const prod = row.querySelector(`#drugProduct_${i}`) || row.querySelector('select[id^="drugProduct_"]');
-      const ndc  = row.querySelector('[data-role="ndc"]');
-      const nameId = `drugName_${i}`, doseId = `drugDosage_${i}`, prodId = `drugProduct_${i}`, freqId = `drugFreq_${i}`;
-      const freq = row.querySelector(`#${freqId}`) || row.querySelector('input[id^="drugFreq_"]');
-      if (name) { name.id = nameId; name.name = `drugList[${i}][name]`; }
-      if (dose) { dose.id = doseId; dose.name = `drugList[${i}][dosage]`; }
-      if (prod) { prod.id = prodId; }
-      if (freq) { freq.id = freqId; freq.name = `drugList[${i}][frequency]`; }
-      if (ndc)  { ndc.name = `drugList[${i}][ndc]`; }
-      const nameLabel = row.querySelector(`label[for^="drugName_"]`);
-      const doseLabel = row.querySelector(`label[for^="drugDosage_"]`);
-      const prodLabel = row.querySelector(`label[for^="drugProduct_"]`);
-      if (nameLabel) nameLabel.setAttribute('for', nameId), nameLabel.textContent = `Drug ${i+1} - Generic`;
-      if (doseLabel) doseLabel.setAttribute('for', doseId);
-      if (prodLabel) prodLabel.setAttribute('for', prodId);
+      const label = row.querySelector('label');
+      if (label) label.textContent = `Drug ${i+1} - Generic`;
     });
   }
 
@@ -46366,8 +46315,7 @@ wrap.innerHTML = `
       const res = await fetch(leadURL, {
         method: "POST",
         body: CONFIG.relay ? JSON.stringify(Object.fromEntries(formData)) : new URLSearchParams(formData),
-        headers: CONFIG.relay ? { "Content-Type": "application/json", "Accept": "application/json,text/html" } : { "Accept": "application/json,text/html" },
-        mode: CONFIG.relay ? "same-origin" : "cors"
+        headers: CONFIG.relay ? { "Content-Type": "application/json", "Accept": "application/json,text/html" } : { "Accept": "application/json,text/html" }
       });
       leadResText = await res.text();
       log(`✓ Lead response status: ${res.status}`);
@@ -46425,13 +46373,10 @@ wrap.innerHTML = `
   /* ========================
      Contact Drugs POST (manual or chained)
      ======================== */
-const payload = buildContactDrugsPayload();
-await fetch(CONFIG.RELAY_URLS.drugs, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(payload)
-});
-
+  document.getElementById('previewPayloadBtn').addEventListener('click', () => {
+    const payload = buildContactDrugsPayload();
+    document.getElementById('chainStatus').textContent = JSON.stringify(payload, null, 2);
+  });
 
   document.getElementById('sendDrugsBtn').addEventListener('click', () => sendContactDrugs(false));
 
@@ -46450,14 +46395,13 @@ await fetch(CONFIG.RELAY_URLS.drugs, {
     }
 
     const url = CONFIG.relay ? CONFIG.RELAY_URLS.drugs : endpoint;
-    log(`${fromChain ? "→" : "→"} Posting MembersDrugs to ${url} ...`);
+    log(`→ Posting MembersDrugs to ${url} ...`);
 
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json,text/plain" },
-        body: JSON.stringify(payload),
-        mode: CONFIG.relay ? "same-origin" : "cors"
+        body: JSON.stringify(payload)
       });
       const text = await res.text();
       log(`✓ Drugs response status: ${res.status}\n${text}`);
@@ -46465,7 +46409,26 @@ await fetch(CONFIG.RELAY_URLS.drugs, {
       log(`❗ Drugs POST failed: ${err?.message || err}`);
     }
   }
+
+  /* ====== Boot ====== */
+  (function initDrugPicker() {
+    const raw = readRawJSON();
+    const catalog = buildCatalog(raw);
+    window.__catalog = catalog;
+
+    addDrugRow(0, catalog);
+    document.getElementById('add-drug').addEventListener('click', () => {
+      const idx = document.querySelectorAll('.drug-entry').length;
+      addDrugRow(idx, catalog);
+    });
+
+    // Prefill defaults for Contact Drugs settings
+    document.getElementById('drugsEndpoint').value = DEFAULT_DRUGS.endpoint;
+    document.getElementById('RemoteAccessKey').value = DEFAULT_DRUGS.RemoteAccessKey;
+    document.getElementById('WebsiteAccessKey').value = DEFAULT_DRUGS.WebsiteAccessKey;
+  })();
 </script>
 
 </body>
 </html>
+
