@@ -5,17 +5,7 @@
   <title>Member Medications</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-  --bg: #FFFFFF;          /* page background */
-  --card: #FFFFFF;        /* card background */
-  --muted: #6B7280;       /* muted text */
-  --text: #2B2D5C;        /* primary text color */
-  --accent: #00ADEF;      /* primary action blue */
-  --accent-2: #5F4B8B;    /* secondary purple */
-  --danger: #D72638;      /* red for delete */
-  --input: #FFFFFF;       /* inputs white */
-  --border: #E2E8F0;      /* light border */
-}
+    :root{ --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --accent-2:#38bdf8; --danger:#ef4444; --input:#0b1220; --border:#1f2937; }
     *{box-sizing:border-box}
     body{margin:0;background:linear-gradient(180deg,#0b1020,#0f172a 30%);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Arial}
     header{padding:24px 20px;border-bottom:1px solid var(--border);background:rgba(17,24,39,.6);backdrop-filter:blur(6px);position:sticky;top:0;z-index:10}
@@ -58,7 +48,7 @@
 <body>
 <header>
   <h1>Member Medications</h1>
-  <div class="hint">Local JSON search with automatic API fallback. 🔨🤖🔧</div>
+  <div class="hint">Search powered by a local JSON drug list (no external API). 🔨🤖🔧</div>
 </header>
 
 <main>
@@ -79,7 +69,7 @@
           <label>Environment</label>
           <select id="env">
             <option value="stg">Staging</option>
-            <option value="prod" selected>Production</option>
+            <option value="prod">Production</option>
           </select>
         </div>
       </div>
@@ -229,12 +219,6 @@
 
 <script>
 /**
- * ======== INJECT YOUR DRUG LIST HERE ========
- * Paste your JSON array inside the brackets below.
- * Accepts either:
- *   A) Flat:  [{ "NDC":"###########", "DrugName":"Atorvastatin", "IsBrand":false }, ...]
- *   B) Nested: [{ BrandName, GenericName, DrugPackages:[{ NDC, IsBrand, FDAProductName, PackageDescription }] }, ...]
- */
 window.LOCAL_DRUGS = [
   {
     "NDC": "16729045317",
@@ -46009,11 +45993,7 @@ window.LOCAL_DRUGS = [
     "StrengthPerVolume": "",
     "Route": "TOPICAL"
   }
-];
-/**
- * ============================================
- */
-
+]
 /** ========================
  *  CONFIG
  *  ======================== */
@@ -46031,7 +46011,7 @@ const CONFIG = {
     wak: 'actws_wak',
     remember: 'actws_remember'
   },
-  localDrugUrl: '/drugs.json' // used only if LOCAL_DRUGS is empty
+  localDrugUrl: '/drugs.json'
 };
 
 // UI helpers
@@ -46053,8 +46033,8 @@ let cachedRows = [];
 let selectedDrug = null;
 let lastMembers = []; // cache of last-known members
 
-// Search data
-let LOCAL_DRUG_INDEX = []; // { ndc, name, isBrand, extra, lcName }
+// Local drug search state
+let LOCAL_DRUG_INDEX = []; // array of { ndc, name, isBrand, extra, lcName }
 let localDrugLoaded = false;
 
 // ===== Remember Keys (sessionStorage) =====
@@ -46098,7 +46078,7 @@ function onModeChange(){
   $('#warnDirect').style.display = direct ? 'block' : 'none';
   if (direct){ loadSavedKeys(); }
 }
-onModeChange(); // init
+onModeChange(); // initialize on first paint
 
 // Helpers
 function apiTarget(method){
@@ -46147,7 +46127,7 @@ async function postActWS(method, bodySansKeys){
 }
 
 /* ===========================
-   DRUG SEARCH (Local + API fallback)
+   DRUG SEARCH (Local list)
    =========================== */
 const searchInput = $('#drugSearch');
 const dropdown = $('#drugDropdown');
@@ -46155,28 +46135,22 @@ const dropdown = $('#drugDropdown');
 let searchTimer = null;
 let activeIndex = -1;          // for keyboard nav
 let lastList = [];             // current dropdown items
-const searchCache = new Map(); // for API fallback caching
 
 // Load local list (from window or /drugs.json)
 async function loadLocalDrugs(){
   try{
-    let raw = Array.isArray(window.LOCAL_DRUGS) && window.LOCAL_DRUGS.length ? window.LOCAL_DRUGS : null;
+    let raw = Array.isArray(window.LOCAL_DRUGS) ? window.LOCAL_DRUGS : null;
     if(!raw){
-      // try to fetch /drugs.json as a convenience
       const res = await fetch(CONFIG.localDrugUrl, { cache:'no-store' });
-      if (res.ok) raw = await res.json();
+      raw = await res.json();
     }
-    if (Array.isArray(raw) && raw.length){
-      normalizeLocalDrugs(raw);
-      localDrugLoaded = true;
-      toast(`Loaded ${LOCAL_DRUG_INDEX.length} local drug entries`);
-    } else {
-      localDrugLoaded = false;
-      console.info('No local drugs provided; will use API fallback (SearchRxDrugs)');
-    }
+    normalizeLocalDrugs(raw);
+    localDrugLoaded = true;
+    toast(`Loaded ${LOCAL_DRUG_INDEX.length} local drug entries`);
   }catch(e){
     localDrugLoaded = false;
-    console.warn('Could not load local drug list; will use API fallback.', e);
+    console.error('Failed to load local drug list:', e);
+    toast('Could not load local drug list (drugs.json).', 'error');
   }
 }
 
@@ -46203,7 +46177,7 @@ function normalizeLocalDrugs(raw){
       continue;
     }
 
-    // Shape B: has DrugPackages (Quotit-like)
+    // Shape B: has DrugPackages
     const brand = (item.BrandName||'').toString().trim();
     const generic = (item.GenericName||'').toString().trim();
     const baseName = brand || generic;
@@ -46237,17 +46211,7 @@ searchInput.addEventListener('input', (e)=>{
   activeIndex = -1;
   if (searchTimer) clearTimeout(searchTimer);
   if (q.length < 2){ hideDropdown(); return; }
-  // Use local if present, else API fallback
-  searchTimer = setTimeout(()=>{
-    if (localDrugLoaded && LOCAL_DRUG_INDEX.length){
-      runDrugSearchLocal(q);
-    } else {
-      runDrugSearchApi(q).catch(err=>{
-        showDropdownHint('Could not search right now. You can still enter NDC and Drug Name manually.');
-        console.error(err);
-      });
-    }
-  }, 140);
+  searchTimer = setTimeout(()=> runDrugSearchLocal(q), 120);
 });
 
 // Keyboard nav for dropdown
@@ -46280,74 +46244,33 @@ function updateActive(){
   });
 }
 
-/* --- Local search --- */
 function runDrugSearchLocal(keyword){
+  if(!localDrugLoaded){
+    dropdown.innerHTML = `<div class="hint">Drug list still loading…</div>`;
+    dropdown.style.display = 'block';
+    return;
+  }
+
   const q = keyword.toLowerCase();
+  // rank: name startsWith > name includes > ndc includes
   const results = [];
   for (const row of LOCAL_DRUG_INDEX){
     let score = Infinity;
     const iName = row.lcName.indexOf(q);
     if (iName === 0) score = 0;
     else if (iName > 0) score = 100 + iName;
-    else if (row.ndc && row.ndc.includes(keyword)) score = 200;
+    else if (row.ndc.includes(keyword)) score = 200;
+
     if (score !== Infinity){
       results.push([score, row]);
-      if (results.length > 600) break; // keep snappy
+      if (results.length > 400) break; // keep search snappy on huge lists
     }
   }
   results.sort((a,b)=> a[0]-b[0]);
   renderDrugOptions(keyword, results.slice(0, 50).map(x=>x[1]));
+
   if (!results.length){
-    showDropdownHint(`No local matches for “${escapeHtml(keyword)}”.`);
-  }
-}
-
-/* --- API fallback search --- */
-async function runDrugSearchApi(keyword){
-  const q = keyword.toLowerCase();
-
-  // Cache hit?
-  if (searchCache.has(q)){
-    renderDrugOptions(keyword, searchCache.get(q));
-    return;
-  }
-
-  // Spinner
-  dropdown.innerHTML = `<div class="spinner">Searching “${escapeHtml(keyword)}” …</div>`;
-  dropdown.style.display = 'block';
-
-  const data = await postActWS('SearchRxDrugs', {
-    RemoteAccessKey: null,
-    WebsiteAccessKey: null,
-    Inputs: { Keyword: keyword }
-  });
-
-  // Auth hint if needed
-  if (data?.IsSuccess === false && Array.isArray(data.Errors)) {
-    const authErr = data.Errors.find(e => /auth/i.test(e));
-    if (authErr) {
-      showDropdownHint('Authentication failed for SearchRxDrugs. Use Direct mode with keys or update the proxy to inject keys.');
-      return;
-    }
-  }
-
-  const list = (data?.Drugs || []).slice(0, 50).flatMap(drug=>{
-    const brand = drug.BrandName || '';
-    const generic = drug.GenericName || '';
-    const title = (brand || generic || 'Unnamed').trim();
-    return (drug.DrugPackages||[]).slice(0, 2).map(pkg=>({
-      ndc: String(pkg.NDC||'').trim(),
-      name: (generic || brand || pkg.FDAProductName || '').trim(),
-      isBrand: !!pkg.IsBrand,
-      extra: { FDAProductName: pkg.FDAProductName||'', PackageDescription: pkg.PackageDescription||'' }
-    }));
-  });
-
-  searchCache.set(q, list);
-  renderDrugOptions(keyword, list);
-
-  if (!list.length){
-    showDropdownHint('No matches. If this persists, ask Quotit to enable keyword search, or rely on the local JSON.');
+    showDropdownHint(`No matches for “${escapeHtml(keyword)}”. Try more letters or paste the NDC.`);
   }
 }
 
@@ -46394,13 +46317,10 @@ function hideDropdown(){
   lastList = [];
   activeIndex = -1;
 }
-
 function showDropdownHint(text){
   dropdown.innerHTML = `<div class="hint">${escapeHtml(text)}</div>`;
   dropdown.style.display = 'block';
 }
-
-// utils for highlighting & escaping
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 function highlight(text, qlc){
   const t = text || '';
@@ -46413,7 +46333,7 @@ function highlight(text, qlc){
 }
 
 /* ===========================
-   LOAD / TABLE / SUBMIT
+   LOAD / TABLE / SUBMIT (unchanged)
    =========================== */
 $('#btnLoad').addEventListener('click', ()=> loadMember(false));
 $('#btnLoadHistory').addEventListener('click', ()=> loadMember(true));
@@ -46440,7 +46360,7 @@ async function loadMember(includeHistory){
     });
 
     const buckets = resp?.MembersDrugs || [];
-    lastMembers = buckets.map(m => ({ MemberId: String(m.MemberId || ''), MemberGUID: String(m.MemberGUID || '' )}));
+    lastMembers = buckets.map(m => ({ MemberId: String(m.MemberId || ''), MemberGUID: String(m.MemberGUID || '') }));
 
     const rows = buckets.flatMap(m => (m.Drugs||[]).map(d => ({ memberId:m.MemberId||m.MemberGUID, ...d })));
     cachedRows = rows;
@@ -46654,20 +46574,8 @@ $('#btnLast').addEventListener('click', ()=>{
 
 $('#btnDiag').addEventListener('click', async ()=>{
   const out = [];
-  out.push(`▶ Local drug index entries: ${LOCAL_DRUG_INDEX.length} ${localDrugLoaded?'(loaded)':'(not loaded; API fallback)'} `);
-
-  if (!localDrugLoaded || !LOCAL_DRUG_INDEX.length){
-    // try an API ping to confirm proxy works
-    try{
-      const rx = await postActWS('SearchRxDrugs', { RemoteAccessKey:null, WebsiteAccessKey:null, Inputs:{ Keyword:'atorvastatin' }});
-      out.push(`▶ API fallback ping: ${(rx?.Drugs ? rx.Drugs.length : 0)} result(s)`);
-    }catch(e){
-      out.push('❌ API fallback ping failed: ' + e.message);
-    }
-  } else {
-    out.push('ℹ️ Type in the search box to use local list. No API calls are made for search.');
-  }
-
+  out.push(`▶ Local drug index entries: ${LOCAL_DRUG_INDEX.length}`);
+  out.push('▶ Tip: The search box uses the local JSON list; no external calls are made.');
   $('#diagOut').textContent = out.join('\n');
 });
 
